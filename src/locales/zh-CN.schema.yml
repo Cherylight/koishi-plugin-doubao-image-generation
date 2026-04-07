@@ -1,0 +1,34 @@
+$inner:
+  - $desc: 独立模式配置
+    apiKey: 火山方舟 API Key
+    endpoint: 图片生成接口完整地址
+    modelId: 模型 ID
+    size:
+      $desc: 输出尺寸
+      $inner:
+        - 2K
+        - 4K
+    sequentialImageGeneration:
+      $desc: 组图功能开关
+      $inner:
+        - disabled（关闭）
+        - auto（自动）
+    sequentialMaxImages: 组图最大图片数（仅在组图=auto 时生效）
+    optimizePromptMode:
+      $desc: 提示词优化模式
+      $inner:
+        - standard（标准）
+        - fast（快速）
+    watermark: 是否添加水印
+    responseFormat:
+      $desc: 返回格式
+      $inner:
+        - b64_json（Base64）
+        - url（URL链接）
+    dailySuccessLimit: 每日成功图片限额
+    withResultDetails: 是否额外返回本次调用详情
+  - $desc: ChatLuna 模式配置
+    enabled: 是否启用 ChatLuna 模式（需已安装 chatluna 与 chatluna-doubao-adapter）
+    modelId: 图片生成模型 ID
+    toolDescription: 工具描述（供大模型理解工具用途）
+    presetsDir: 人设参考图存放目录（相对于 data 目录）
