@@ -218,7 +218,7 @@ export function registerStandaloneCommands(ctx: Context, config: Config, context
           if (images.length) {
             const checked = await validateAndPrepareImages(ctx, sc.sequentialImageGeneration, sc.sequentialMaxImages, images)
             if (!checked.ok) return `图生图失败：${checked.message}`
-            await session.send(session.text('.gen-working'))
+            await session.send(session.text('commands.gen.messages.gen-working'))
             const result = await requestImageGeneration(ctx, genOptions, {
               prompt: finalPrompt || 'regenerate',
               images: checked.images,
@@ -226,7 +226,7 @@ export function registerStandaloneCommands(ctx: Context, config: Config, context
             const count = await sendGenerationResult(session, sc.responseFormat, sc.withResultDetails, sc.sequentialImageGeneration, result)
             await addTodayUsage(ctx, count)
           } else if (finalPrompt) {
-            await session.send(session.text('.gen-working'))
+            await session.send(session.text('commands.gen.messages.gen-working'))
             const result = await requestImageGeneration(ctx, genOptions, { prompt: finalPrompt })
             const count = await sendGenerationResult(session, sc.responseFormat, sc.withResultDetails, sc.sequentialImageGeneration, result)
             await addTodayUsage(ctx, count)
