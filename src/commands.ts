@@ -145,9 +145,8 @@ export function registerStandaloneCommands(ctx: Context, config: Config, context
       // 确定来源内容：引用消息优先，否则使用命令后的内容
       let sourceContent = quoteContent || ''
 
-      // 从 rawContent 中去除命令本身，提取附加内容
-      const cmdMatch = rawContent.match(/^gen-append\s*/i)
-      const afterCmd = cmdMatch ? rawContent.slice(cmdMatch[0].length).trim() : ''
+      // 使用 Koishi 命令解析结果取命令后文本，正确处理命令前有 @mention 等前缀的情况
+      const afterCmd = (session.argv?.rest || '').trim()
 
       if (!sourceContent && !afterCmd) {
         return session.text('.gen-append-empty')
@@ -168,7 +167,7 @@ export function registerStandaloneCommands(ctx: Context, config: Config, context
       }
 
       const expireNotify = () => {
-        session.send(session.text('.gen-context-expired')).catch(() => {})
+        session.send(session.text('commands.gen-append.messages.gen-context-expired')).catch(() => {})
       }
 
       const userCtx = contextManager.append(
