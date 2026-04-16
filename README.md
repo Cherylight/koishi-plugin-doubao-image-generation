@@ -131,7 +131,7 @@ gen-ctx -s       # 以当前上下文发送生成请求
 4. PNG 格式，建议尺寸不小于 512×512，不超过 6000×6000
 5. 如果有多个角色预设，你需要为每个预设准备一张同名 PNG 文件
 
-> 预设名即 `chatluna-character` 中配置的预设文件名（不含扩展名）。大模型调用工具时 `use_preset_image: true`，插件会自动查找 `<预设名>.png` 作为参考图。
+> 预设名即 `chatluna-character` 中配置的预设名（对应preset的name字段）。大模型调用工具时 `use_preset_image: true`，插件会自动查找 `<预设名>.png` 作为参考图。
 
 ## 配置参数
 
