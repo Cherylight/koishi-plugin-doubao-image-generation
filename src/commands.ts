@@ -145,8 +145,11 @@ export function registerStandaloneCommands(ctx: Context, config: Config, context
       // 确定来源内容：引用消息优先，否则使用命令后的内容
       let sourceContent = quoteContent || ''
 
-      // 使用 Koishi 命令解析结果取命令后文本，正确处理命令前有 @mention 等前缀的情况
-      const afterCmd = (session.argv?.rest || '').trim()
+      // 直接从整条消息体中提取命令后文本：优先解析文本节点，避免被 @mention 等元素干扰
+      const rawText = extractText(rawContent)
+      const textMatch = rawText.match(/(?:^|\s)gen-append(?:\s+|$)([\s\S]*)/i)
+      const rawMatch = rawContent.match(/gen-append([\s\S]*)/i)
+      const afterCmd = (textMatch?.[1] || rawMatch?.[1] || '').trim()
 
       if (!sourceContent && !afterCmd) {
         return session.text('.gen-append-empty')
