@@ -43,22 +43,34 @@ const StandaloneSchema: Schema<StandaloneConfig> = Schema.object({
   modelId: Schema.string()
     .default('doubao-seedream-4-5-251128')
     .description('模型 ID'),
-  size: Schema.union(['2K', '4K'] as const)
+  size: Schema.union([
+    Schema.const('2K').description('2K'),
+    Schema.const('4K').description('4K'),
+  ] as const)
     .default('4K')
     .description('输出尺寸'),
-  sequentialImageGeneration: Schema.union(['disabled', 'auto'] as const)
+  sequentialImageGeneration: Schema.union([
+    Schema.const('disabled').description('disabled'),
+    Schema.const('auto').description('auto'),
+  ] as const)
     .default('disabled')
     .description('组图功能开关'),
   sequentialMaxImages: Schema.number().min(1).max(15).step(1)
     .default(15)
     .description('组图最大图片数（仅在组图=auto 时生效）'),
-  optimizePromptMode: Schema.union(['standard', 'fast'] as const)
+  optimizePromptMode: Schema.union([
+    Schema.const('standard').description('standard'),
+    Schema.const('fast').description('fast'),
+  ] as const)
     .default('standard')
     .description('提示词优化模式'),
   watermark: Schema.boolean()
     .default(false)
     .description('是否添加水印'),
-  responseFormat: Schema.union(['b64_json', 'url'] as const)
+  responseFormat: Schema.union([
+    Schema.const('b64_json').description('b64_json'),
+    Schema.const('url').description('url'),
+  ] as const)
     .default('b64_json')
     .description('返回格式'),
   dailySuccessLimit: Schema.number().min(1).max(10000).step(1)
@@ -76,10 +88,16 @@ const ChatlunaSchema: Schema<ChatlunaConfig> = Schema.object({
   modelId: Schema.string()
     .default('doubao-seedream-4-5-251128')
     .description('图片生成模型 ID'),
-  size: Schema.union(['2K', '4K'] as const)
+  size: Schema.union([
+    Schema.const('2K').description('2K'),
+    Schema.const('4K').description('4K'),
+  ] as const)
     .default('4K')
     .description('默认输出尺寸（不暴露给工具，仅作为内部默认值）').hidden(),
-  optimizePromptMode: Schema.union(['standard', 'fast'] as const)
+  optimizePromptMode: Schema.union([
+    Schema.const('standard').description('standard'),
+    Schema.const('fast').description('fast'),
+  ] as const)
     .default('standard')
     .description('提示词优化模式（不暴露给工具，仅作为内部默认值）').hidden(),
   watermark: Schema.boolean()

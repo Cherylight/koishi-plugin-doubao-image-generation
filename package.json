@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-doubao-image-generation",
   "description": "基于豆包 Seedream 的图片生成插件，支持文生图/图生图，可独立使用或作为 ChatLuna 工具",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "type": "module",
   "main": "lib/index.cjs",
   "module": "lib/index.mjs",
