@@ -42,6 +42,7 @@ gen-switch --t2i on           # 开启文生图
 gen-switch --i2i off          # 关闭图生图
 gen-switch --t2i on --i2i on  # 同时开启
 ```
+>频道开关默认为on
 
 ### `gen-append`
 

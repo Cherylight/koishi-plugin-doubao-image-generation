@@ -3,7 +3,7 @@ import './types'
 import type { Config } from './config'
 import { ContextManager, ContextEntry } from './context-manager'
 import {
-  extractImages, extractText, normalizeApiError, logger,
+  extractImages, extractText, normalizeApiError, logger, IMAGE_SWITCH_TABLE,
 } from './utils'
 import {
   checkDailyQuota, validateAndPrepareImages, requestImageGeneration,
@@ -12,6 +12,40 @@ import {
 
 export function registerStandaloneCommands(ctx: Context, config: Config, contextManager: ContextManager) {
   const sc = config.standalone
+
+  const DEFAULT_SWITCH = { textToImage: true, imageToImage: true }
+
+  function getChannelKey(session: Session) {
+    return `${session.platform}:${session.channelId}`
+  }
+
+  async function getChannelSwitch(session: Session) {
+    const channelKey = getChannelKey(session)
+    const [row] = await ctx.database.get(IMAGE_SWITCH_TABLE, { channelKey })
+    if (!row) return { ...DEFAULT_SWITCH }
+    return {
+      textToImage: row.textToImage !== false,
+      imageToImage: row.imageToImage !== false,
+    }
+  }
+
+  async function setChannelSwitch(session: Session, value: { textToImage: boolean; imageToImage: boolean }) {
+    const channelKey = getChannelKey(session)
+    await ctx.database.upsert(IMAGE_SWITCH_TABLE, [{
+      channelKey,
+      textToImage: value.textToImage,
+      imageToImage: value.imageToImage,
+      updatedAt: Date.now(),
+    }])
+  }
+
+  async function checkModeEnabled(session: Session, useImageInput: boolean) {
+    const current = await getChannelSwitch(session)
+    const enabled = useImageInput ? current.imageToImage : current.textToImage
+    if (enabled) return null
+    const mode = useImageInput ? '图生图' : '文生图'
+    return session.text('commands.gen.messages.gen-mode-disabled', { mode })
+  }
 
   // ── gen: 文生图 / 图生图主入口 ──
   ctx.command('gen <prompt:text>', '图片生成')
@@ -24,6 +58,9 @@ export function registerStandaloneCommands(ctx: Context, config: Config, context
       if (!finalPrompt && !images.length) {
         return session.text('.gen-no-input')
       }
+
+      const modeError = await checkModeEnabled(session, images.length > 0)
+      if (modeError) return modeError
 
       try {
         const quota = await checkDailyQuota(ctx, sc.dailySuccessLimit, sc.sequentialImageGeneration)
@@ -59,57 +96,12 @@ export function registerStandaloneCommands(ctx: Context, config: Config, context
       }
     })
 
-  // ── gen-switch: 全局开关管理 ──
-  const switches = new Map<string, { textToImage: boolean; imageToImage: boolean }>()
-  const switchTimers = new Map<string, ReturnType<typeof setTimeout>>()
-  const SWITCH_EXPIRE_MS = 7 * 24 * 60 * 60 * 1000
-  const MAX_SWITCHES = 5000
-
-  function clearSwitchTimer(channelKey: string) {
-    const timer = switchTimers.get(channelKey)
-    if (!timer) return
-    clearTimeout(timer)
-    switchTimers.delete(channelKey)
-  }
-
-  function resetSwitchTimer(channelKey: string) {
-    clearSwitchTimer(channelKey)
-    const timer = setTimeout(() => {
-      switches.delete(channelKey)
-      switchTimers.delete(channelKey)
-    }, SWITCH_EXPIRE_MS)
-    switchTimers.set(channelKey, timer)
-  }
-
-  function setSwitch(channelKey: string, value: { textToImage: boolean; imageToImage: boolean }) {
-    if (!switches.has(channelKey) && switches.size >= MAX_SWITCHES) {
-      const oldestKey = switches.keys().next().value as string | undefined
-      if (oldestKey) {
-        switches.delete(oldestKey)
-        clearSwitchTimer(oldestKey)
-      }
-    }
-    switches.set(channelKey, value)
-    resetSwitchTimer(channelKey)
-  }
-
-  function getSwitch(channelKey: string) {
-    return switches.get(channelKey) ?? { textToImage: false, imageToImage: false }
-  }
-
-  ctx.on('dispose', () => {
-    for (const timer of switchTimers.values()) clearTimeout(timer)
-    switchTimers.clear()
-    switches.clear()
-  })
-
   ctx.command('gen-switch', '图片生成功能开关', { authority: 3 })
     .option('t2i', '--t2i <state:string>', { fallback: undefined })
     .option('i2i', '--i2i <state:string>', { fallback: undefined })
     .action(async ({ session, options }) => {
       if (!session) return
-      const key = `${session.platform}:${session.channelId}`
-      const current = getSwitch(key)
+      const current = await getChannelSwitch(session)
 
       if (!options?.t2i && !options?.i2i) {
         return session.text('.gen-switch-status', {
@@ -127,7 +119,7 @@ export function registerStandaloneCommands(ctx: Context, config: Config, context
         current.imageToImage = options.i2i === 'on'
       }
 
-      setSwitch(key, current)
+      await setChannelSwitch(session, current)
       return session.text('.gen-switch-updated', {
         t2i: current.textToImage ? 'on' : 'off',
         i2i: current.imageToImage ? 'on' : 'off',
@@ -160,6 +152,9 @@ export function registerStandaloneCommands(ctx: Context, config: Config, context
 
       const images = extractImages(combinedContent)
       const text = extractText(combinedContent)
+
+      const modeError = await checkModeEnabled(session, images.length > 0)
+      if (modeError) return modeError
 
       const entries: ContextEntry[] = []
       if (text) entries.push({ type: 'text', content: text })
@@ -210,6 +205,9 @@ export function registerStandaloneCommands(ctx: Context, config: Config, context
         if (!finalPrompt && !images.length) {
           return session.text('.gen-ctx-empty')
         }
+
+        const modeError = await checkModeEnabled(session, images.length > 0)
+        if (modeError) return modeError
 
         try {
           const quota = await checkDailyQuota(ctx, sc.dailySuccessLimit, sc.sequentialImageGeneration)

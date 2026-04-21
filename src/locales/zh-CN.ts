@@ -5,6 +5,7 @@ export default {
       messages: {
         'gen-no-input': '请输入提示词或附带图片，例如：gen 一只在月球上散步的橘猫',
         'gen-working': '正在按照你的需求生成图片…',
+        'gen-mode-disabled': '当前频道{mode}已被管理员禁用',
       },
     },
     'gen-switch': {

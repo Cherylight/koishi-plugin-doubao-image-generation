@@ -1,7 +1,7 @@
 import { Context, Schema } from 'koishi'
 import './types'
 import { Config } from './config'
-import { DAILY_USAGE_TABLE, logger } from './utils'
+import { DAILY_USAGE_TABLE, IMAGE_SWITCH_TABLE, logger } from './utils'
 import { ContextManager } from './context-manager'
 import { registerStandaloneCommands } from './commands'
 import { registerChatlunaIntegration } from './chatluna-integration'
@@ -38,6 +38,24 @@ export function apply(ctx: Context, config: Config) {
     },
   }, {
     primary: 'date',
+  })
+
+  ctx.model.extend(IMAGE_SWITCH_TABLE, {
+    channelKey: 'string',
+    textToImage: {
+      type: 'boolean',
+      initial: true,
+    },
+    imageToImage: {
+      type: 'boolean',
+      initial: true,
+    },
+    updatedAt: {
+      type: 'unsigned',
+      initial: 0,
+    },
+  }, {
+    primary: 'channelKey',
   })
 
   // Create context manager (in-memory, auto-disposes with plugin)

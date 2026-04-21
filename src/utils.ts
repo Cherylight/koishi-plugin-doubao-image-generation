@@ -3,6 +3,7 @@ import { h, Logger } from 'koishi'
 export const logger = new Logger('doubao-image-generation')
 
 export const DAILY_USAGE_TABLE = 'doubao_image_daily_usage'
+export const IMAGE_SWITCH_TABLE = 'doubao_image_switch'
 
 export const ERROR_CODE_ZH: Record<string, string> = {
   MissingParameter: '请求缺少必要参数，请查阅 API 文档。',

@@ -35,8 +35,9 @@ export interface Config {
 }
 
 const StandaloneSchema: Schema<StandaloneConfig> = Schema.object({
-  apiKey: Schema.string().role('secret').required()
-    .description('火山方舟 API Key'),
+  apiKey: Schema.string().role('secret')
+    .default('')
+    .description('火山方舟 API Key（可留空，仅使用 ChatLuna 模式时无需填写）'),
   endpoint: Schema.string()
     .default('https://ark.cn-beijing.volces.com/api/v3/images/generations')
     .description('图片生成接口完整地址'),
