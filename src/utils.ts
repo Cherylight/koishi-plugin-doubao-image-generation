@@ -4,6 +4,7 @@ export const logger = new Logger('doubao-image-generation')
 
 export const DAILY_USAGE_TABLE = 'doubao_image_daily_usage'
 export const IMAGE_SWITCH_TABLE = 'doubao_image_switch'
+export const WEB_SEARCH_MODEL_PREFIX = 'doubao-seedream-5-0'
 
 export const ERROR_CODE_ZH: Record<string, string> = {
   MissingParameter: '请求缺少必要参数，请查阅 API 文档。',
@@ -281,6 +282,17 @@ export function formatErrorMessage(code: string, message: string): string {
   return `${code || '-'}${zh ? `（${zh}）` : ''}\n${message || ''}`.trim()
 }
 
+export function supportsWebSearchModel(modelId: string): boolean {
+  return String(modelId || '').toLowerCase().startsWith(WEB_SEARCH_MODEL_PREFIX)
+}
+
+export function extractWebSearchUsage(result: any): number {
+  const raw = result?.usage?.tool_usage?.web_search
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return 0
+  return Math.floor(n)
+}
+
 export function buildDetailMessage(result: any): string {
   const rows: string[] = []
   rows.push('【图片生成调用结果】')
@@ -290,7 +302,7 @@ export function buildDetailMessage(result: any): string {
   const sizes = data.map((item: any) => item?.size).filter(Boolean)
   rows.push(`图片宽高: ${sizes.length ? sizes.join(', ') : '-'}`)
   if (result?.usage) {
-    rows.push(`用量: generated_images=${result.usage.generated_images ?? '-'}, output_tokens=${result.usage.output_tokens ?? '-'}, total_tokens=${result.usage.total_tokens ?? '-'}`)
+    rows.push(`用量: generated_images=${result.usage.generated_images ?? '-'}, output_tokens=${result.usage.output_tokens ?? '-'}, total_tokens=${result.usage.total_tokens ?? '-'}, tool_usage.web_search=${result.usage?.tool_usage?.web_search ?? 0}`)
   } else {
     rows.push('用量: -')
   }

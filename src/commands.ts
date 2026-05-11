@@ -3,7 +3,7 @@ import './types'
 import type { Config } from './config'
 import { ContextManager, ContextEntry } from './context-manager'
 import {
-  extractImages, extractText, normalizeApiError, logger, IMAGE_SWITCH_TABLE,
+  extractImages, extractText, normalizeApiError, logger, IMAGE_SWITCH_TABLE, extractWebSearchUsage,
 } from './utils'
 import {
   checkDailyQuota, validateAndPrepareImages, requestImageGeneration,
@@ -78,13 +78,13 @@ export function registerStandaloneCommands(ctx: Context, config: Config, context
             images: checked.images,
           })
           const count = await sendGenerationResult(session, sc.responseFormat, sc.withResultDetails, sc.sequentialImageGeneration, result)
-          await addTodayUsage(ctx, count)
+          await addTodayUsage(ctx, count, extractWebSearchUsage(result))
         } else {
           // 文生图
           await session.send(session.text('.gen-working'))
           const result = await requestImageGeneration(ctx, options, { prompt: finalPrompt })
           const count = await sendGenerationResult(session, sc.responseFormat, sc.withResultDetails, sc.sequentialImageGeneration, result)
-          await addTodayUsage(ctx, count)
+          await addTodayUsage(ctx, count, extractWebSearchUsage(result))
         }
       } catch (error: any) {
         logger.warn('API 调用错误:', error)
@@ -224,12 +224,12 @@ export function registerStandaloneCommands(ctx: Context, config: Config, context
               images: checked.images,
             })
             const count = await sendGenerationResult(session, sc.responseFormat, sc.withResultDetails, sc.sequentialImageGeneration, result)
-            await addTodayUsage(ctx, count)
+            await addTodayUsage(ctx, count, extractWebSearchUsage(result))
           } else if (finalPrompt) {
             await session.send(session.text('commands.gen.messages.gen-working'))
             const result = await requestImageGeneration(ctx, genOptions, { prompt: finalPrompt })
             const count = await sendGenerationResult(session, sc.responseFormat, sc.withResultDetails, sc.sequentialImageGeneration, result)
-            await addTodayUsage(ctx, count)
+            await addTodayUsage(ctx, count, extractWebSearchUsage(result))
           } else {
             return session.text('.gen-ctx-no-prompt')
           }

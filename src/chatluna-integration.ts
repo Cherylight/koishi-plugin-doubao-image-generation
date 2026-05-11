@@ -1,7 +1,7 @@
 import { Context, h } from 'koishi'
 import './types'
 import type { Config, ChatlunaConfig } from './config'
-import { logger, asDataUri, normalizeApiError, translateErrorCode } from './utils'
+import { logger, asDataUri, normalizeApiError, translateErrorCode, extractWebSearchUsage } from './utils'
 import {
   requestImageGeneration, validateAndPrepareImages,
   addTodayUsage, type ImageGenOptions,
@@ -76,6 +76,7 @@ function buildChatlunaGenOptions(
     apiKey: credentials.apiKey,
     endpoint,
     modelId: chatlunaConfig.modelId,
+    enableWebSearch: chatlunaConfig.enableWebSearch,
     size: chatlunaConfig.size,
     sequential: 'disabled',
     sequentialMaxImages: 1,
@@ -232,7 +233,7 @@ export function registerChatlunaIntegration(ctx: Context, config: Config) {
         }
 
         if (successCount > 0) {
-          await addTodayUsage(this.genCtx, successCount)
+          await addTodayUsage(this.genCtx, successCount, extractWebSearchUsage(result))
           return JSON.stringify({ success: true, message: `图片生成成功，已发送 ${successCount} 张图片给用户。` })
         }
 

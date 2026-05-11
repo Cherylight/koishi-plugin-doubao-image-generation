@@ -143,6 +143,7 @@ gen-ctx -s       # 以当前上下文发送生成请求
 | `apiKey` | `string` | — | 火山方舟 API Key（必填） |
 | `endpoint` | `string` | `https://ark.cn-beijing.volces.com/api/v3/images/generations` | 图片生成接口地址 |
 | `modelId` | `string` | `doubao-seedream-4-5-251128` | 模型 ID |
+| `enableWebSearch` | `boolean` | `false` | 是否启用联网搜索（仅对 `doubao-seedream-5-0` 系列生效） |
 | `size` | `"2K" \| "4K"` | `4K` | 输出尺寸 |
 | `sequentialImageGeneration` | `"disabled" \| "auto"` | `disabled` | 组图功能开关 |
 | `sequentialMaxImages` | `number` | `15` | 组图最大数量（1-15） |
@@ -158,8 +159,15 @@ gen-ctx -s       # 以当前上下文发送生成请求
 |------|------|--------|------|
 | `enabled` | `boolean` | `false` | 是否启用 |
 | `modelId` | `string` | `doubao-seedream-4-5-251128` | 图片生成模型 ID |
+| `enableWebSearch` | `boolean` | `false` | 是否启用联网搜索（仅对 `doubao-seedream-5-0` 系列生效） |
 | `toolDescription` | `string` | （见下方） | 工具描述（供大模型理解用途） |
 | `presetsDir` | `string` | `doubao-image-generation/presets` | 人设参考图存放目录（相对于 data） |
+
+### 联网搜索说明
+
+- 插件在 `enableWebSearch=true` 且模型为 `doubao-seedream-5-0` 系列时，才会向图片生成请求添加 `tools: [{ "type": "web_search" }]`。
+- 模型返回中的联网搜索次数使用 `usage.tool_usage.web_search` 字段。
+- 当独立模式开启 `withResultDetails` 时，详情消息会展示 `tool_usage.web_search`。
 
 默认工具描述：
 

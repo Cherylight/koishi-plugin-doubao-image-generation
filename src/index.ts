@@ -36,6 +36,10 @@ export function apply(ctx: Context, config: Config) {
       type: 'unsigned',
       initial: 0,
     },
+    webSearchCount: {
+      type: 'unsigned',
+      initial: 0,
+    },
   }, {
     primary: 'date',
   })

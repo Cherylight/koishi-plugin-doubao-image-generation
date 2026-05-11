@@ -14,6 +14,7 @@ declare module 'koishi' {
 export interface DailyUsageRow {
   date: string
   successCount: number
+  webSearchCount: number
 }
 
 export interface ImageSwitchRow {

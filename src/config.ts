@@ -9,6 +9,7 @@ export interface StandaloneConfig {
   apiKey: string
   endpoint: string
   modelId: string
+  enableWebSearch: boolean
   size: ImageSize
   sequentialImageGeneration: SequentialMode
   sequentialMaxImages: number
@@ -22,6 +23,7 @@ export interface StandaloneConfig {
 export interface ChatlunaConfig {
   enabled: boolean
   modelId: string
+  enableWebSearch: boolean
   size: ImageSize
   optimizePromptMode: OptimizePromptMode
   watermark: boolean
@@ -44,6 +46,9 @@ const StandaloneSchema: Schema<StandaloneConfig> = Schema.object({
   modelId: Schema.string()
     .default('doubao-seedream-4-5-251128')
     .description('模型 ID'),
+  enableWebSearch: Schema.boolean()
+    .default(false)
+    .description('是否启用联网搜索（仅对 doubao-seedream-5-0 系列生效）'),
   size: Schema.union([
     Schema.const('2K').description('2K'),
     Schema.const('4K').description('4K'),
@@ -89,6 +94,9 @@ const ChatlunaSchema: Schema<ChatlunaConfig> = Schema.object({
   modelId: Schema.string()
     .default('doubao-seedream-4-5-251128')
     .description('图片生成模型 ID'),
+  enableWebSearch: Schema.boolean()
+    .default(false)
+    .description('是否启用联网搜索（仅对 doubao-seedream-5-0 系列生效）'),
   size: Schema.union([
     Schema.const('2K').description('2K'),
     Schema.const('4K').description('4K'),

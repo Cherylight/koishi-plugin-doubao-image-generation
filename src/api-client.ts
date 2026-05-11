@@ -2,7 +2,8 @@ import { Context } from 'koishi'
 import './types'
 import {
   logger, normalizeApiError, detectImageMeta, parseDataUri, getImageRulesByModel,
-  asDataUri, translateErrorCode, buildDetailMessage, DAILY_USAGE_TABLE, todayKey, keepFromDateKey
+  asDataUri, translateErrorCode, buildDetailMessage, DAILY_USAGE_TABLE, todayKey, keepFromDateKey,
+  supportsWebSearchModel,
 } from './utils'
 import type { StandaloneConfig, ImageSize, OptimizePromptMode } from './config'
 
@@ -31,13 +32,14 @@ export async function getTodayUsage(ctx: Context): Promise<number> {
   return (row as any)?.successCount || 0
 }
 
-export async function addTodayUsage(ctx: Context, count: number) {
-  if (!count) return
+export async function addTodayUsage(ctx: Context, successDelta: number, webSearchDelta = 0) {
+  if (!successDelta && !webSearchDelta) return
   await cleanupOldUsageRows(ctx)
   const date = todayKey()
   const [row] = await ctx.database.get(DAILY_USAGE_TABLE, { date })
-  const successCount = ((row as any)?.successCount || 0) + count
-  await ctx.database.upsert(DAILY_USAGE_TABLE, [{ date, successCount }])
+  const successCount = ((row as any)?.successCount || 0) + successDelta
+  const webSearchCount = ((row as any)?.webSearchCount || 0) + webSearchDelta
+  await ctx.database.upsert(DAILY_USAGE_TABLE, [{ date, successCount, webSearchCount }])
 }
 
 export async function checkDailyQuota(ctx: Context, dailyLimit: number, sequential: string): Promise<{ ok: boolean; message?: string }> {
@@ -111,6 +113,7 @@ export interface ImageGenOptions {
   apiKey: string
   endpoint: string
   modelId: string
+  enableWebSearch: boolean
   size: ImageSize
   sequential: string
   sequentialMaxImages: number
@@ -138,6 +141,9 @@ export async function requestImageGeneration(ctx: Context, options: ImageGenOpti
   if (payload.images?.length) {
     body.image = payload.images.length === 1 ? payload.images[0] : payload.images
   }
+  if (options.enableWebSearch && supportsWebSearchModel(options.modelId)) {
+    body.tools = [{ type: 'web_search' }]
+  }
   return ctx.http.post(options.endpoint, body, {
     headers: {
       Authorization: `Bearer ${options.apiKey}`,
@@ -151,6 +157,7 @@ export function buildOptionsFromStandalone(config: StandaloneConfig): ImageGenOp
     apiKey: config.apiKey,
     endpoint: config.endpoint,
     modelId: config.modelId,
+    enableWebSearch: config.enableWebSearch,
     size: config.size,
     sequential: config.sequentialImageGeneration,
     sequentialMaxImages: config.sequentialMaxImages,
