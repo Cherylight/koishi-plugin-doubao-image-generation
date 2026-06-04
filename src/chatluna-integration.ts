@@ -1,11 +1,17 @@
 import { Context, h } from 'koishi'
 import './types'
 import type { Config, ChatlunaConfig } from './config'
+import { resolveDailyLimit } from './config'
 import { logger, asDataUri, normalizeApiError, translateErrorCode, extractWebSearchUsage } from './utils'
 import {
   requestImageGeneration, validateAndPrepareImages,
-  addTodayUsage, type ImageGenOptions,
+  type ImageGenOptions,
 } from './api-client'
+import {
+  buildDedupeKey,
+  GenerationController,
+  resolveSessionLockKey,
+} from './generation-controller'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -127,7 +133,7 @@ function resolvePresetImage(ctx: Context, presetsDir: string, presetName: string
   return null
 }
 
-export function registerChatlunaIntegration(ctx: Context, config: Config) {
+export function registerChatlunaIntegration(ctx: Context, config: Config, generationController: GenerationController) {
   const cc = config.chatluna
   if (!cc.enabled) return
 
@@ -182,8 +188,19 @@ export function registerChatlunaIntegration(ctx: Context, config: Config) {
       _runManager?: any,
       parentConfig?: any,
     ): Promise<string> {
-      const session = parentConfig?.configurable?.session
+      const configurable = parentConfig?.configurable || {}
+      const session = configurable.session
+      const conversationId: string = configurable.conversationId || ''
       const presetName: string = parentConfig?.configurable?.preset || ''
+      const lockKey = resolveSessionLockKey(session, conversationId)
+      if (lockKey === 'global') {
+        logger.warn('photo_generation 缺少 ChatLuna session/conversationId，上下文隔离退化为全局锁')
+      }
+      const dedupeKey = buildDedupeKey(
+        lockKey,
+        input.prompt,
+        `chatluna:${presetName}:${input.use_preset_image ? 'preset' : 'text'}`,
+      )
 
       try {
         const options = buildChatlunaGenOptions(this.genConfig, this.genCredentials)
@@ -211,41 +228,61 @@ export function registerChatlunaIntegration(ctx: Context, config: Config) {
           }
         }
 
-        const result = await requestImageGeneration(this.genCtx, options, {
+        const output = await generationController.run({
           prompt: input.prompt,
           images: preparedImages,
+          responseFormat: options.responseFormat,
+          quotaUnits: 1,
+          dailyLimit: resolveDailyLimit(config),
+          lockKey,
+          dedupeKey,
+          generate: () => requestImageGeneration(this.genCtx, options, {
+            prompt: input.prompt,
+            images: preparedImages,
+          }),
+          sendResult: async (result) => {
+            const data = Array.isArray(result?.data) ? result.data : []
+            let sentCount = 0
+
+            // 直接发送图片给用户（不返回图片数据给 LLM）
+            if (session) {
+              for (const item of data) {
+                if (item?.b64_json) {
+                  await session.send(h.image(asDataUri(item.b64_json)))
+                  sentCount += 1
+                } else if (item?.url) {
+                  await session.send(h.image(item.url))
+                  sentCount += 1
+                }
+              }
+            }
+
+            if (sentCount > 0) return sentCount
+
+            // 处理错误并直接发送给用户
+            const err = result?.error || data.find((d: any) => d?.error)?.error
+            const errMsg = err?.message || '未返回可用图片'
+            const errCode = err?.code || ''
+            const zh = errCode ? translateErrorCode(errCode) : ''
+            if (session) {
+              await session.send(`图片生成失败：${errCode || '-'}${zh ? `（${zh}）` : ''}\n${errMsg}`.trim())
+            }
+            return sentCount
+          },
+          webSearchUsage: extractWebSearchUsage,
         })
 
-        const data = Array.isArray(result?.data) ? result.data : []
-        let successCount = 0
-
-        // 直接发送图片给用户（不返回图片数据给 LLM）
-        if (session) {
-          for (const item of data) {
-            if (item?.b64_json) {
-              successCount += 1
-              await session.send(h.image(asDataUri(item.b64_json)))
-            } else if (item?.url) {
-              successCount += 1
-              await session.send(h.image(item.url))
-            }
-          }
+        if (output.status === 'ok') {
+          return JSON.stringify({ success: true, message: output.message })
         }
-
-        if (successCount > 0) {
-          await addTodayUsage(this.genCtx, successCount, extractWebSearchUsage(result))
-          return JSON.stringify({ success: true, message: `图片生成成功，已发送 ${successCount} 张图片给用户。` })
+        if (output.status === 'no_image') {
+          const err = output.result?.error || (output.result?.data || []).find((d: any) => d?.error)?.error
+          return JSON.stringify({ success: false, message: err?.message || output.message })
         }
-
-        // 处理错误并直接发送给用户
-        const err = result?.error || data.find((d: any) => d?.error)?.error
-        const errMsg = err?.message || '未返回可用图片'
-        const errCode = err?.code || ''
-        const zh = errCode ? translateErrorCode(errCode) : ''
-        if (session) {
-          await session.send(`图片生成失败：${errCode || '-'}${zh ? `（${zh}）` : ''}\n${errMsg}`.trim())
+        if (session && output.status !== 'send_failed') {
+          await session.send(output.message)
         }
-        return JSON.stringify({ success: false, message: errMsg })
+        return JSON.stringify({ success: false, message: output.message })
       } catch (error: any) {
         logger.warn('photo_generation tool error:', error)
         const info = normalizeApiError(error)

@@ -32,3 +32,5 @@ $inner:
     modelId: 图片生成模型 ID
     toolDescription: 工具描述（供大模型理解工具用途）
     presetsDir: 人设参考图存放目录（相对于 data 目录）
+  - $desc: 共享限额配置
+    dailyImageLimit: 插件级每日图片生成限额。设为 0 时沿用独立模式 dailySuccessLimit。

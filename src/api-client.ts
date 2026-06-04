@@ -6,6 +6,8 @@ import {
   supportsWebSearchModel,
 } from './utils'
 import type { StandaloneConfig, ImageSize, OptimizePromptMode } from './config'
+import type { DailyUsageSnapshot, QuotaStore } from './generation-controller'
+import { normalizeUsageRow } from './generation-controller'
 
 // ── Database helpers ──
 
@@ -29,7 +31,8 @@ export async function cleanupOldUsageRows(ctx: Context, force = false) {
 export async function getTodayUsage(ctx: Context): Promise<number> {
   await cleanupOldUsageRows(ctx)
   const [row] = await ctx.database.get(DAILY_USAGE_TABLE, { date: todayKey() })
-  return (row as any)?.successCount || 0
+  const usage = normalizeUsageRow({ date: todayKey(), ...(row as any || {}) })
+  return usage.apiGeneratedCount + usage.reservedCount
 }
 
 export async function addTodayUsage(ctx: Context, successDelta: number, webSearchDelta = 0) {
@@ -37,9 +40,12 @@ export async function addTodayUsage(ctx: Context, successDelta: number, webSearc
   await cleanupOldUsageRows(ctx)
   const date = todayKey()
   const [row] = await ctx.database.get(DAILY_USAGE_TABLE, { date })
-  const successCount = ((row as any)?.successCount || 0) + successDelta
-  const webSearchCount = ((row as any)?.webSearchCount || 0) + webSearchDelta
-  await ctx.database.upsert(DAILY_USAGE_TABLE, [{ date, successCount, webSearchCount }])
+  const next = normalizeUsageRow({ date, ...(row as any || {}) })
+  next.successCount += successDelta
+  next.messageSentCount += successDelta
+  next.apiGeneratedCount += successDelta
+  next.webSearchCount += webSearchDelta
+  await ctx.database.upsert(DAILY_USAGE_TABLE, [next])
 }
 
 export async function checkDailyQuota(ctx: Context, dailyLimit: number, sequential: string): Promise<{ ok: boolean; message?: string }> {
@@ -54,6 +60,22 @@ export async function checkDailyQuota(ctx: Context, dailyLimit: number, sequenti
   } catch (error) {
     logger.warn(error)
     return { ok: true }
+  }
+}
+
+export class KoishiQuotaStore implements QuotaStore {
+  constructor(private ctx: Context) {}
+
+  async getToday(): Promise<DailyUsageSnapshot> {
+    await cleanupOldUsageRows(this.ctx)
+    const date = todayKey()
+    const [row] = await this.ctx.database.get(DAILY_USAGE_TABLE, { date })
+    return normalizeUsageRow({ date, ...(row as any || {}) })
+  }
+
+  async saveToday(row: DailyUsageSnapshot): Promise<void> {
+    await cleanupOldUsageRows(this.ctx)
+    await this.ctx.database.upsert(DAILY_USAGE_TABLE, [normalizeUsageRow(row)])
   }
 }
 

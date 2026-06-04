@@ -68,6 +68,7 @@
   "scripts": {
     "build": "tsc --noEmit false && node build.mjs",
     "build:types": "tsc --noEmit false",
+    "test:offline": "node scripts/offline-acceptance.mjs",
     "prepublishOnly": "npm run build"
   }
 }

@@ -2,6 +2,8 @@ import { Context, Schema } from 'koishi'
 import './types'
 import { Config } from './config'
 import { DAILY_USAGE_TABLE, IMAGE_SWITCH_TABLE, logger } from './utils'
+import { KoishiQuotaStore } from './api-client'
+import { GenerationController, QuotaManager } from './generation-controller'
 import { ContextManager } from './context-manager'
 import { registerStandaloneCommands } from './commands'
 import { registerChatlunaIntegration } from './chatluna-integration'
@@ -40,6 +42,26 @@ export function apply(ctx: Context, config: Config) {
       type: 'unsigned',
       initial: 0,
     },
+    reservedCount: {
+      type: 'unsigned',
+      initial: 0,
+    },
+    apiRequestedCount: {
+      type: 'unsigned',
+      initial: 0,
+    },
+    apiGeneratedCount: {
+      type: 'unsigned',
+      initial: 0,
+    },
+    messageSentCount: {
+      type: 'unsigned',
+      initial: 0,
+    },
+    sendFailedCount: {
+      type: 'unsigned',
+      initial: 0,
+    },
   }, {
     primary: 'date',
   })
@@ -64,16 +86,19 @@ export function apply(ctx: Context, config: Config) {
 
   // Create context manager (in-memory, auto-disposes with plugin)
   const contextManager = new ContextManager(ctx)
+  const generationController = new GenerationController(
+    new QuotaManager(new KoishiQuotaStore(ctx)),
+  )
 
   // Register standalone commands (always available)
-  registerStandaloneCommands(ctx, config, contextManager)
+  registerStandaloneCommands(ctx, config, contextManager, generationController)
   logger.info('独立模式指令已注册')
 
   // Register ChatLuna integration (conditional)
   if (config.chatluna.enabled) {
     // Use ctx.inject to properly handle optional chatluna dependency
     ctx.inject(['chatluna'], (ctx) => {
-      registerChatlunaIntegration(ctx, config)
+      registerChatlunaIntegration(ctx, config, generationController)
     })
   }
 }

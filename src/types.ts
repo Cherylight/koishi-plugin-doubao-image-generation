@@ -15,6 +15,11 @@ export interface DailyUsageRow {
   date: string
   successCount: number
   webSearchCount: number
+  reservedCount: number
+  apiRequestedCount: number
+  apiGeneratedCount: number
+  messageSentCount: number
+  sendFailedCount: number
 }
 
 export interface ImageSwitchRow {

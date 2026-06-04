@@ -1,16 +1,27 @@
 import { Context, Session, h } from 'koishi'
 import './types'
 import type { Config } from './config'
+import { resolveDailyLimit } from './config'
 import { ContextManager, ContextEntry } from './context-manager'
 import {
   extractImages, extractText, normalizeApiError, logger, IMAGE_SWITCH_TABLE, extractWebSearchUsage,
 } from './utils'
 import {
-  checkDailyQuota, validateAndPrepareImages, requestImageGeneration,
-  sendGenerationResult, addTodayUsage, buildOptionsFromStandalone,
+  validateAndPrepareImages, requestImageGeneration,
+  sendGenerationResult, buildOptionsFromStandalone,
 } from './api-client'
+import {
+  buildDedupeKey,
+  GenerationController,
+  resolveSessionLockKey,
+} from './generation-controller'
 
-export function registerStandaloneCommands(ctx: Context, config: Config, contextManager: ContextManager) {
+export function registerStandaloneCommands(
+  ctx: Context,
+  config: Config,
+  contextManager: ContextManager,
+  generationController: GenerationController,
+) {
   const sc = config.standalone
 
   const DEFAULT_SWITCH = { textToImage: true, imageToImage: true }
@@ -47,6 +58,42 @@ export function registerStandaloneCommands(ctx: Context, config: Config, context
     return session.text('commands.gen.messages.gen-mode-disabled', { mode })
   }
 
+  async function runGeneration(session: Session, prompt: string, images?: string[]) {
+    const options = buildOptionsFromStandalone(sc)
+    const quotaUnits = sc.sequentialImageGeneration === 'auto' ? sc.sequentialMaxImages : 1
+    const lockKey = resolveSessionLockKey(session)
+    const dedupeKey = buildDedupeKey(
+      lockKey,
+      prompt,
+      `standalone:${sc.sequentialImageGeneration}:${sc.responseFormat}:${(images || []).join(',')}`,
+    )
+
+    const output = await generationController.run({
+      prompt,
+      images,
+      responseFormat: sc.responseFormat,
+      quotaUnits,
+      dailyLimit: resolveDailyLimit(config),
+      lockKey,
+      dedupeKey,
+      generate: async () => {
+        await session.send(session.text('commands.gen.messages.gen-working'))
+        return requestImageGeneration(ctx, options, { prompt, images })
+      },
+      sendResult: (result) => sendGenerationResult(
+        session,
+        sc.responseFormat,
+        sc.withResultDetails,
+        sc.sequentialImageGeneration,
+        result,
+      ),
+      webSearchUsage: extractWebSearchUsage,
+    })
+
+    if (output.status === 'ok' || output.status === 'no_image') return
+    return output.message
+  }
+
   // ── gen: 文生图 / 图生图主入口 ──
   ctx.command('gen <prompt:text>', '图片生成')
     .action(async ({ session }, prompt) => {
@@ -63,28 +110,14 @@ export function registerStandaloneCommands(ctx: Context, config: Config, context
       if (modeError) return modeError
 
       try {
-        const quota = await checkDailyQuota(ctx, sc.dailySuccessLimit, sc.sequentialImageGeneration)
-        if (!quota.ok) return quota.message
-
-        const options = buildOptionsFromStandalone(sc)
-
         if (images.length) {
           // 图生图
           const checked = await validateAndPrepareImages(ctx, sc.sequentialImageGeneration, sc.sequentialMaxImages, images)
           if (!checked.ok) return `图生图失败：${checked.message}`
-          await session.send(session.text('.gen-working'))
-          const result = await requestImageGeneration(ctx, options, {
-            prompt: finalPrompt || 'regenerate',
-            images: checked.images,
-          })
-          const count = await sendGenerationResult(session, sc.responseFormat, sc.withResultDetails, sc.sequentialImageGeneration, result)
-          await addTodayUsage(ctx, count, extractWebSearchUsage(result))
+          return runGeneration(session, finalPrompt || 'regenerate', checked.images)
         } else {
           // 文生图
-          await session.send(session.text('.gen-working'))
-          const result = await requestImageGeneration(ctx, options, { prompt: finalPrompt })
-          const count = await sendGenerationResult(session, sc.responseFormat, sc.withResultDetails, sc.sequentialImageGeneration, result)
-          await addTodayUsage(ctx, count, extractWebSearchUsage(result))
+          return runGeneration(session, finalPrompt)
         }
       } catch (error: any) {
         logger.warn('API 调用错误:', error)
@@ -210,26 +243,12 @@ export function registerStandaloneCommands(ctx: Context, config: Config, context
         if (modeError) return modeError
 
         try {
-          const quota = await checkDailyQuota(ctx, sc.dailySuccessLimit, sc.sequentialImageGeneration)
-          if (!quota.ok) return quota.message
-
-          const genOptions = buildOptionsFromStandalone(sc)
-
           if (images.length) {
             const checked = await validateAndPrepareImages(ctx, sc.sequentialImageGeneration, sc.sequentialMaxImages, images)
             if (!checked.ok) return `图生图失败：${checked.message}`
-            await session.send(session.text('commands.gen.messages.gen-working'))
-            const result = await requestImageGeneration(ctx, genOptions, {
-              prompt: finalPrompt || 'regenerate',
-              images: checked.images,
-            })
-            const count = await sendGenerationResult(session, sc.responseFormat, sc.withResultDetails, sc.sequentialImageGeneration, result)
-            await addTodayUsage(ctx, count, extractWebSearchUsage(result))
+            return runGeneration(session, finalPrompt || 'regenerate', checked.images)
           } else if (finalPrompt) {
-            await session.send(session.text('commands.gen.messages.gen-working'))
-            const result = await requestImageGeneration(ctx, genOptions, { prompt: finalPrompt })
-            const count = await sendGenerationResult(session, sc.responseFormat, sc.withResultDetails, sc.sequentialImageGeneration, result)
-            await addTodayUsage(ctx, count, extractWebSearchUsage(result))
+            return runGeneration(session, finalPrompt)
           } else {
             return session.text('.gen-ctx-no-prompt')
           }

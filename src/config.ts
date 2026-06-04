@@ -31,9 +31,14 @@ export interface ChatlunaConfig {
   presetsDir: string
 }
 
+export interface QuotaConfig {
+  dailyImageLimit: number
+}
+
 export interface Config {
   standalone: StandaloneConfig
   chatluna: ChatlunaConfig
+  quota: QuotaConfig
 }
 
 const StandaloneSchema: Schema<StandaloneConfig> = Schema.object({
@@ -120,7 +125,20 @@ const ChatlunaSchema: Schema<ChatlunaConfig> = Schema.object({
     .description('人设参考图存放目录（相对于 data 目录）'),
 }).description('ChatLuna 模式配置')
 
+const QuotaSchema: Schema<QuotaConfig> = Schema.object({
+  dailyImageLimit: Schema.number().min(0).max(10000).step(1)
+    .default(0)
+    .description('插件级每日图片生成限额。设为 0 时沿用独立模式 dailySuccessLimit。'),
+}).description('共享限额配置')
+
 export const Config: Schema<Config> = Schema.object({
   standalone: StandaloneSchema,
   chatluna: ChatlunaSchema,
+  quota: QuotaSchema,
 })
+
+export function resolveDailyLimit(config: Config): number {
+  const shared = Number(config.quota?.dailyImageLimit || 0)
+  if (Number.isFinite(shared) && shared > 0) return Math.floor(shared)
+  return config.standalone.dailySuccessLimit
+}

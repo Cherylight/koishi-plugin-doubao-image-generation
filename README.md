@@ -9,7 +9,7 @@
 - **组图模式**：一次生成多张图片（输入+输出最多 15 张）
 - **上下文管理**：通过引用消息逐步构建复杂的生成请求
 - **ChatLuna 集成**：注册为 `photo_generation` 工具，支持角色人设图混合生图
-- **双模式运行**：独立模式和 ChatLuna 模式互不干扰，可同时启用
+- **双模式运行**：独立模式和 ChatLuna 模式可同时启用，并共享插件级日限预算
 
 ## 运行模式
 
@@ -152,6 +152,12 @@ gen-ctx -s       # 以当前上下文发送生成请求
 | `responseFormat` | `"b64_json" \| "url"` | `b64_json` | 返回格式 |
 | `dailySuccessLimit` | `number` | `20` | 每日成功图片限额 |
 | `withResultDetails` | `boolean` | `false` | 是否额外返回调用详情 |
+
+### 共享限额 (`quota`)
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `dailyImageLimit` | `number` | `0` | 插件级每日图片生成限额。设为 `0` 时沿用独立模式 `dailySuccessLimit` |
 
 ### ChatLuna 模式 (`chatluna`)
 
