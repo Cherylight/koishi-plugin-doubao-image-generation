@@ -15,6 +15,7 @@ import {
   GenerationController,
   resolveSessionLockKey,
 } from './generation-controller'
+import { validateRuntimeRequest } from './request-options'
 
 export function registerStandaloneCommands(
   ctx: Context,
@@ -59,19 +60,30 @@ export function registerStandaloneCommands(
   }
 
   async function runGeneration(session: Session, prompt: string, images?: string[]) {
-    const options = buildOptionsFromStandalone(sc)
-    const quotaUnits = sc.sequentialImageGeneration === 'auto' ? sc.sequentialMaxImages : 1
+    const options = buildOptionsFromStandalone(config)
+    validateRuntimeRequest(options, { prompt, images })
+    const quotaUnits = options.apiType === 'openai-compatible'
+      ? options.generationCount
+      : options.layerDecomposition
+        ? 17
+        : options.sequential === 'auto' ? options.sequentialMaxImages : 1
+    const withResultDetails = options.apiType === 'openai-compatible'
+      ? Boolean(config.openAICompatible.withResultDetails)
+      : sc.withResultDetails
+    const resultGrouping = options.apiType === 'openai-compatible' && options.generationCount > 1
+      ? 'auto'
+      : options.sequential
     const lockKey = resolveSessionLockKey(session)
     const dedupeKey = buildDedupeKey(
       lockKey,
       prompt,
-      `standalone:${sc.sequentialImageGeneration}:${sc.responseFormat}:${(images || []).join(',')}`,
+      `standalone:${options.apiType}:${options.modelId}:${options.size}:${options.generationCount}:${options.responseFormat}:${options.layerDecomposition}:${options.transparentBackground}:${options.sequential}:${(images || []).join(',')}`,
     )
 
     const output = await generationController.run({
       prompt,
       images,
-      responseFormat: sc.responseFormat,
+      responseFormat: options.responseFormat,
       quotaUnits,
       dailyLimit: resolveDailyLimit(config),
       lockKey,
@@ -82,16 +94,26 @@ export function registerStandaloneCommands(
       },
       sendResult: (result) => sendGenerationResult(
         session,
-        sc.responseFormat,
-        sc.withResultDetails,
-        sc.sequentialImageGeneration,
+        options.responseFormat,
+        withResultDetails,
+        resultGrouping,
         result,
+        options.layerDecomposition,
       ),
       webSearchUsage: extractWebSearchUsage,
     })
 
     if (output.status === 'ok' || output.status === 'no_image') return
     return output.message
+  }
+
+  async function prepareAndRunWithImages(session: Session, finalPrompt: string, images: string[]) {
+    const options = buildOptionsFromStandalone(config)
+    const requestPrompt = options.layerDecomposition ? finalPrompt : finalPrompt || 'regenerate'
+    validateRuntimeRequest(options, { prompt: requestPrompt, images })
+    const checked = await validateAndPrepareImages(ctx, options, images)
+    if (!checked.ok) return `图生图失败：${checked.message}`
+    return runGeneration(session, requestPrompt, checked.images)
   }
 
   // ── gen: 文生图 / 图生图主入口 ──
@@ -112,9 +134,7 @@ export function registerStandaloneCommands(
       try {
         if (images.length) {
           // 图生图
-          const checked = await validateAndPrepareImages(ctx, sc.sequentialImageGeneration, sc.sequentialMaxImages, images)
-          if (!checked.ok) return `图生图失败：${checked.message}`
-          return runGeneration(session, finalPrompt || 'regenerate', checked.images)
+          return prepareAndRunWithImages(session, finalPrompt, images)
         } else {
           // 文生图
           return runGeneration(session, finalPrompt)
@@ -244,9 +264,7 @@ export function registerStandaloneCommands(
 
         try {
           if (images.length) {
-            const checked = await validateAndPrepareImages(ctx, sc.sequentialImageGeneration, sc.sequentialMaxImages, images)
-            if (!checked.ok) return `图生图失败：${checked.message}`
-            return runGeneration(session, finalPrompt || 'regenerate', checked.images)
+            return prepareAndRunWithImages(session, finalPrompt, images)
           } else if (finalPrompt) {
             return runGeneration(session, finalPrompt)
           } else {

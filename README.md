@@ -7,16 +7,19 @@
 - **文生图**：输入文字描述即可生成图片
 - **图生图**：附带参考图片 + 文字描述生成新图片
 - **组图模式**：一次生成多张图片（输入+输出最多 15 张）
+- **图层拆分**：Seedream 5.0 Pro 将单张图片拆成底图和最多 16 个透明图层
+- **透明通道**：Seedream 5.0 Pro 基于单张透明图片生成 PNG 透明背景图片
 - **上下文管理**：通过引用消息逐步构建复杂的生成请求
 - **ChatLuna 集成**：注册为 `photo_generation` 工具，支持角色人设图混合生图
 - **双模式运行**：独立模式和 ChatLuna 模式可同时启用，并共享插件级日限预算
+- **OpenAI 兼容接口**：可用一组完全独立的配置覆盖 ARK 请求，自动区分文生图与图片编辑端点
 
 ## 运行模式
 
 | 模式 | 说明 | 依赖 |
 |------|------|------|
 | **独立模式** | 直接通过指令使用，需手动配置 API Key 和端点 | `database` |
-| **ChatLuna 模式** | 从 `chatluna-doubao-adapter` 继承 API 配置，注册为Chatluna工具 | `chatluna` + `chatluna-doubao-adapter` |
+| **ChatLuna 模式** | ARK 模式从 `chatluna-doubao-adapter` 继承 API 配置，注册为Chatluna工具 | `chatluna`；ARK 模式另需 `chatluna-doubao-adapter` |
 
 ## 指令
 
@@ -144,7 +147,9 @@ gen-ctx -s       # 以当前上下文发送生成请求
 | `endpoint` | `string` | `https://ark.cn-beijing.volces.com/api/v3/images/generations` | 图片生成接口地址 |
 | `modelId` | `string` | `doubao-seedream-4-5-251128` | 模型 ID |
 | `enableWebSearch` | `boolean` | `false` | 是否启用联网搜索（仅对 `doubao-seedream-5-0` 系列生效） |
-| `size` | `"2K" \| "4K"` | `4K` | 输出尺寸 |
+| `size` | `string` | `4K` | 分辨率档位（如 `2K`）或宽高像素值（如 `2048x1024`）；仅运行时校验 |
+| `layerDecomposition` | `boolean` | `false` | 图层拆分开关，仅 5.0 Pro；与组图互斥 |
+| `transparentBackground` | `boolean` | `false` | 透明通道开关，仅 5.0 Pro 单图图生图；输入须含 Alpha 通道，输出强制 PNG |
 | `sequentialImageGeneration` | `"disabled" \| "auto"` | `disabled` | 组图功能开关 |
 | `sequentialMaxImages` | `number` | `15` | 组图最大数量（1-15） |
 | `optimizePromptMode` | `"standard" \| "fast"` | `standard` | 提示词优化模式 |
@@ -153,11 +158,34 @@ gen-ctx -s       # 以当前上下文发送生成请求
 | `dailySuccessLimit` | `number` | `20` | 每日成功图片限额 |
 | `withResultDetails` | `boolean` | `false` | 是否额外返回调用详情 |
 
+`layerDecomposition=true` 时必须关闭组图，并且只可输入一张 PNG/JPEG；提示词可留空，此时由模型自动识别主要元素。`transparentBackground=true` 时只可输入一张带 Alpha 通道的 PNG/WebP，插件会发送 `background: "transparent"` 并强制 `output_format: "png"`。
+
+`size` 是无格式约束的文本配置，控制台保存时不会校验。插件仅在生成请求运行时按当前模型检查：Seedream 5.0 Pro 图片生成支持 `1K` / `1.5K` / `2K` 或总像素 921600～4624220、宽高比 1/16～16 的 `宽x高`；图层拆分支持 `auto` / `1K` / `1.5K` / `2K`。其他模型的档位和像素范围按对应官方限制检查。
+
 ### 共享限额 (`quota`)
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `dailyImageLimit` | `number` | `0` | 插件级每日图片生成限额。设为 `0` 时沿用独立模式 `dailySuccessLimit` |
+
+### OpenAI 兼容接口 (`openAICompatible`)
+
+该配置组位于控制台配置页最底部。只有打开 `enabled` 后，其他字段才会展开并参与运行；关闭时插件继续使用原有 ARK 独立配置与 ChatLuna Doubao Adapter 配置。
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `enabled` | `boolean` | `false` | 启用 OpenAI 兼容接口配置 |
+| `baseURL` | `string` | `http://127.0.0.1:8000/v1` | 兼容接口 Base URL |
+| `apiKey` | `string` | — | 独立 API Key |
+| `modelId` | `string` | `gpt-image-2` | 硬编码的模型选单，可在 `koishi.yml` 手动指定 |
+| `size` | `string` | `auto` | 指定输出尺寸，格式如 `1024x1024` |
+| `n` | `number` | `1` | 独立生成数量，范围 1～4 |
+| `quality` | `string` | `auto` | 独立图片质量参数 |
+| `responseFormat` | `"b64_json" \| "url"` | `b64_json` | 独立返回格式 |
+| `dailySuccessLimit` | `number` | `20` | 独立每日成功图片限额；共享限额大于 0 时由共享限额覆盖 |
+| `withResultDetails` | `boolean` | `false` | 是否额外发送调用详情 |
+
+兼容模式下，插件不会继承 ARK 的模型、尺寸、组图、提示词优化、水印、联网搜索、图层拆分或透明背景配置。无参考图时请求 `${baseURL}/images/generations`；有参考图时请求 `${baseURL}/images/edits`。兼容接口的 `data[].b64_json` / `data[].url` 继续沿用现有结果处理流程。
 
 ### ChatLuna 模式 (`chatluna`)
 

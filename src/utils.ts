@@ -134,10 +134,18 @@ export interface ImageRules {
   maxRatio: number
 }
 
-export function getImageRulesByModel(): ImageRules {
+export function getImageRulesByModel(modelId = '', layerDecomposition = false): ImageRules {
+  if (layerDecomposition) {
+    return {
+      maxInputImages: 1,
+      allowedFormats: ['jpeg', 'png'],
+      minRatio: 1 / 16,
+      maxRatio: 16,
+    }
+  }
   return {
-    maxInputImages: 14,
-    allowedFormats: ['jpeg', 'png', 'webp', 'bmp', 'tiff', 'gif'],
+    maxInputImages: String(modelId).toLowerCase().includes('seedream-5-0-pro') ? 10 : 14,
+    allowedFormats: ['jpeg', 'png', 'webp', 'bmp', 'tiff', 'gif', 'heic', 'heif'],
     minRatio: 1 / 16,
     maxRatio: 16,
   }
@@ -228,11 +236,34 @@ function parseTiffSize(buffer: Buffer): { width: number; height: number } | null
   return width && height ? { width, height } : null
 }
 
+function parseHeifMeta(buffer: Buffer): { format: 'heic' | 'heif'; mime: string; width: number; height: number } | null {
+  if (buffer.length < 24 || buffer.toString('ascii', 4, 8) !== 'ftyp') return null
+  const brands = buffer.toString('ascii', 8, Math.min(buffer.length, 64))
+  if (!/(heic|heix|hevc|hevx|heif|mif1|msf1)/.test(brands)) return null
+  let offset = 0
+  while (offset >= 0 && offset + 16 < buffer.length) {
+    offset = buffer.indexOf('ispe', offset, 'ascii')
+    if (offset < 0) break
+    if (offset >= 4 && offset + 16 <= buffer.length) {
+      const boxSize = buffer.readUInt32BE(offset - 4)
+      const width = buffer.readUInt32BE(offset + 8)
+      const height = buffer.readUInt32BE(offset + 12)
+      if (boxSize >= 20 && width > 0 && height > 0) {
+        const format = /(heic|heix|hevc|hevx)/.test(brands) ? 'heic' : 'heif'
+        return { format, mime: `image/${format}`, width, height }
+      }
+    }
+    offset += 4
+  }
+  return null
+}
+
 export interface ImageMeta {
   format: string
   mime: string
   width: number
   height: number
+  hasAlpha: boolean
 }
 
 export function detectImageMeta(buffer: Buffer): ImageMeta | null {
@@ -241,32 +272,43 @@ export function detectImageMeta(buffer: Buffer): ImageMeta | null {
   // PNG
   if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
     if (buffer.length < 24) return null
-    return { format: 'png', mime: 'image/png', width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) }
+    const colorType = buffer[25]
+    return {
+      format: 'png', mime: 'image/png', width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20),
+      hasAlpha: colorType === 4 || colorType === 6,
+    }
   }
   // JPEG
   if (buffer[0] === 0xFF && buffer[1] === 0xD8) {
     const size = parseJpegSize(buffer)
-    return size ? { format: 'jpeg', mime: 'image/jpeg', ...size } : null
+    return size ? { format: 'jpeg', mime: 'image/jpeg', ...size, hasAlpha: false } : null
   }
   // GIF
   if (buffer.toString('ascii', 0, 6) === 'GIF87a' || buffer.toString('ascii', 0, 6) === 'GIF89a') {
-    return { format: 'gif', mime: 'image/gif', width: buffer.readUInt16LE(6), height: buffer.readUInt16LE(8) }
+    return { format: 'gif', mime: 'image/gif', width: buffer.readUInt16LE(6), height: buffer.readUInt16LE(8), hasAlpha: false }
   }
   // BMP
   if (buffer.toString('ascii', 0, 2) === 'BM') {
-    return { format: 'bmp', mime: 'image/bmp', width: Math.abs(buffer.readInt32LE(18)), height: Math.abs(buffer.readInt32LE(22)) }
+    return { format: 'bmp', mime: 'image/bmp', width: Math.abs(buffer.readInt32LE(18)), height: Math.abs(buffer.readInt32LE(22)), hasAlpha: false }
   }
   // WEBP
   if (buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') {
     const size = parseWebpSize(buffer)
-    return size ? { format: 'webp', mime: 'image/webp', ...size } : null
+    const chunkType = buffer.toString('ascii', 12, 16)
+    const hasAlpha = chunkType === 'VP8X'
+      ? Boolean(buffer[20] & 0x10)
+      : chunkType === 'VP8L' && Boolean(buffer[24] & 0x10)
+    return size ? { format: 'webp', mime: 'image/webp', ...size, hasAlpha } : null
   }
   // TIFF
   if ((buffer.toString('ascii', 0, 2) === 'II' && buffer[2] === 0x2A && buffer[3] === 0x00)
     || (buffer.toString('ascii', 0, 2) === 'MM' && buffer[2] === 0x00 && buffer[3] === 0x2A)) {
     const size = parseTiffSize(buffer)
-    return size ? { format: 'tiff', mime: 'image/tiff', ...size } : null
+    return size ? { format: 'tiff', mime: 'image/tiff', ...size, hasAlpha: false } : null
   }
+  // HEIC / HEIF
+  const heif = parseHeifMeta(buffer)
+  if (heif) return { ...heif, hasAlpha: false }
 
   return null
 }
@@ -283,7 +325,8 @@ export function formatErrorMessage(code: string, message: string): string {
 }
 
 export function supportsWebSearchModel(modelId: string): boolean {
-  return String(modelId || '').toLowerCase().startsWith(WEB_SEARCH_MODEL_PREFIX)
+  const normalized = String(modelId || '').toLowerCase()
+  return normalized.startsWith(WEB_SEARCH_MODEL_PREFIX) && !normalized.includes('seedream-5-0-pro')
 }
 
 export function extractWebSearchUsage(result: any): number {

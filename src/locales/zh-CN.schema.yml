@@ -4,12 +4,17 @@ $inner:
     endpoint: 图片生成接口完整地址
     modelId: 模型 ID
     size:
-      $desc: 输出尺寸
-      $inner:
-        - 2K
-        - 4K
+      $desc: |-
+        输出尺寸。支持分辨率档位或宽高像素值，格式与范围由模型决定；配置界面不校验，非法值会在运行时提示
+
+        - **Seedream 5.0 Pro 图片生成**：`1K`、`1.5K`、`2K`，或如 `2048x1024`
+        - **Seedream 5.0 Pro 图层拆分**：`auto`、`1K`、`1.5K`、`2K`
+        - **Seedream 5.0 Lite**：`2K`、`3K`、`4K`，或如 `3750x1250`
+        - **Seedream 4.5 / 4.0**：`2K`、`4K`（4.0 另支持 `1K`），或宽高像素值
+    layerDecomposition: 图层拆分模式（仅 Seedream 5.0 Pro；必须输入 1 张 PNG/JPEG；与组图模式互斥）
+    transparentBackground: 图片透明通道（仅 Seedream 5.0 Pro 图生图；必须输入 1 张带 Alpha 通道的图片；输出 PNG）
     sequentialImageGeneration:
-      $desc: 组图功能开关
+      $desc: 组图功能开关（与图层拆分模式互斥；Seedream 5.0 Pro 不支持）
       $inner:
         - disabled（关闭）
         - auto（自动）
@@ -33,4 +38,19 @@ $inner:
     toolDescription: 工具描述（供大模型理解工具用途）
     presetsDir: 人设参考图存放目录（相对于 data 目录）
   - $desc: 共享限额配置
-    dailyImageLimit: 插件级每日图片生成限额。设为 0 时沿用独立模式 dailySuccessLimit。
+    dailyImageLimit: 插件级每日图片生成限额。设为 0 时沿用独立模式 dailySuccessLimit
+  - $desc: OpenAI 兼容接口配置
+    enabled: 启用 OpenAI 兼容接口配置
+    baseURL: OpenAI 兼容接口 Base URL
+    apiKey: OpenAI 兼容接口 API Key
+    modelId: 模型 ID
+    size: 输出尺寸
+    n: 每次生成图片数量（1～4）
+    quality: 图片质量
+    responseFormat:
+      $desc: 返回格式
+      $inner:
+        - b64_json（Base64）
+        - url（URL链接）
+    dailySuccessLimit: 兼容接口每日成功图片限额
+    withResultDetails: 是否额外返回兼容接口调用详情

@@ -3,9 +3,9 @@ import './types'
 import {
   logger, normalizeApiError, detectImageMeta, parseDataUri, getImageRulesByModel,
   asDataUri, translateErrorCode, buildDetailMessage, DAILY_USAGE_TABLE, todayKey, keepFromDateKey,
-  supportsWebSearchModel,
 } from './utils'
-import type { StandaloneConfig, ImageSize, OptimizePromptMode } from './config'
+import type { Config, OpenAICompatibleConfig, ImageSize, OptimizePromptMode } from './config'
+import { buildImageGenerationBody, resolveImageEndpoint } from './request-options'
 import type { DailyUsageSnapshot, QuotaStore } from './generation-controller'
 import { normalizeUsageRow } from './generation-controller'
 
@@ -94,13 +94,13 @@ export async function loadImageSource(ctx: Context, src: string): Promise<{ buff
 }
 
 export async function validateAndPrepareImages(
-  ctx: Context, sequential: string, sequentialMax: number, imageSources: string[],
+  ctx: Context, options: ImageGenOptions, imageSources: string[],
 ): Promise<{ ok: boolean; message?: string; images?: string[] }> {
-  const rules = getImageRulesByModel()
+  const rules = getImageRulesByModel(options.modelId, options.layerDecomposition)
   if (imageSources.length > rules.maxInputImages) {
     return { ok: false, message: `输入图片数量超限，当前模型最多支持 ${rules.maxInputImages} 张参考图` }
   }
-  if (sequential === 'auto' && imageSources.length + sequentialMax > 15) {
+  if (options.sequential === 'auto' && imageSources.length + options.sequentialMaxImages > 15) {
     return { ok: false, message: '输入的参考图数量与最终生成图片数量总和不能超过 15，请减少参考图或下调组图数量' }
   }
   const outputImages: string[] = []
@@ -112,13 +112,18 @@ export async function validateAndPrepareImages(
     if (!rules.allowedFormats.includes(meta.format)) {
       return { ok: false, message: `第 ${idx} 张图片格式不支持，当前模型仅支持 ${rules.allowedFormats.join('、')}` }
     }
-    if (loaded.buffer.length > 10 * 1024 * 1024) return { ok: false, message: `第 ${idx} 张图片大小超过 10MB` }
-    if (meta.width <= 14 || meta.height <= 14) return { ok: false, message: `第 ${idx} 张图片宽高必须大于 14px` }
+    if (loaded.buffer.length > 30 * 1024 * 1024) return { ok: false, message: `第 ${idx} 张图片大小超过 30MB` }
+    if (!options.layerDecomposition && (meta.width <= 14 || meta.height <= 14)) return { ok: false, message: `第 ${idx} 张图片宽高必须大于 14px` }
     const ratio = meta.width / meta.height
     if (ratio < rules.minRatio || ratio > rules.maxRatio) {
       return { ok: false, message: `第 ${idx} 张图片宽高比不符合要求，需在 [${rules.minRatio}, ${rules.maxRatio}] 范围内` }
     }
-    if (meta.width * meta.height > 6000 * 6000) return { ok: false, message: `第 ${idx} 张图片总像素超过 36000000` }
+    const pixels = meta.width * meta.height
+    if (options.layerDecomposition && pixels < 512 * 512) return { ok: false, message: `第 ${idx} 张图片总像素低于图层拆分要求的 262144` }
+    if (pixels > 6000 * 6000) return { ok: false, message: `第 ${idx} 张图片总像素超过 36000000` }
+    if (options.transparentBackground && !meta.hasAlpha) {
+      return { ok: false, message: `第 ${idx} 张图片不包含透明通道；透明背景模式仅支持带 Alpha 通道的 PNG/WebP 图片` }
+    }
     outputImages.push(loaded.dataUri)
   }
   return { ok: true, images: outputImages }
@@ -132,11 +137,16 @@ export interface ImageGenPayload {
 }
 
 export interface ImageGenOptions {
+  apiType: 'ark' | 'openai-compatible'
   apiKey: string
   endpoint: string
   modelId: string
+  generationCount: number
+  quality: string
   enableWebSearch: boolean
   size: ImageSize
+  layerDecomposition: boolean
+  transparentBackground: boolean
   sequential: string
   sequentialMaxImages: number
   optimizePromptMode: OptimizePromptMode
@@ -145,28 +155,11 @@ export interface ImageGenOptions {
 }
 
 export async function requestImageGeneration(ctx: Context, options: ImageGenOptions, payload: ImageGenPayload): Promise<any> {
+  const endpoint = resolveImageEndpoint(options, payload)
   const maskedKey = options.apiKey ? options.apiKey.slice(0, 4) + '***' + options.apiKey.slice(-4) : '(empty)'
-  logger.debug(`请求参数: endpoint=${options.endpoint}, model=${options.modelId}, key=${maskedKey}`)
-  const body: Record<string, any> = {
-    model: options.modelId,
-    prompt: payload.prompt,
-    size: options.size,
-    sequential_image_generation: options.sequential,
-    optimize_prompt_options: { mode: options.optimizePromptMode },
-    watermark: options.watermark,
-    response_format: options.responseFormat,
-    stream: false,
-  }
-  if (options.sequential === 'auto') {
-    body.sequential_image_generation_options = { max_images: options.sequentialMaxImages }
-  }
-  if (payload.images?.length) {
-    body.image = payload.images.length === 1 ? payload.images[0] : payload.images
-  }
-  if (options.enableWebSearch && supportsWebSearchModel(options.modelId)) {
-    body.tools = [{ type: 'web_search' }]
-  }
-  return ctx.http.post(options.endpoint, body, {
+  logger.debug(`请求参数: apiType=${options.apiType}, endpoint=${endpoint}, model=${options.modelId}, key=${maskedKey}`)
+  const body = buildImageGenerationBody(options, payload)
+  return ctx.http.post(endpoint, body, {
     headers: {
       Authorization: `Bearer ${options.apiKey}`,
       'Content-Type': 'application/json',
@@ -174,18 +167,48 @@ export async function requestImageGeneration(ctx: Context, options: ImageGenOpti
   })
 }
 
-export function buildOptionsFromStandalone(config: StandaloneConfig): ImageGenOptions {
+export function buildOptionsFromOpenAICompatible(config: OpenAICompatibleConfig): ImageGenOptions {
   return {
-    apiKey: config.apiKey,
-    endpoint: config.endpoint,
-    modelId: config.modelId,
-    enableWebSearch: config.enableWebSearch,
-    size: config.size,
-    sequential: config.sequentialImageGeneration,
-    sequentialMaxImages: config.sequentialMaxImages,
-    optimizePromptMode: config.optimizePromptMode,
-    watermark: config.watermark,
-    responseFormat: config.responseFormat,
+    apiType: 'openai-compatible',
+    apiKey: config.apiKey || '',
+    endpoint: config.baseURL || 'http://127.0.0.1:8000/v1',
+    modelId: config.modelId || 'gpt-image-2',
+    generationCount: Number(config.n || 1),
+    quality: config.quality || 'auto',
+    enableWebSearch: false,
+    size: config.size || 'auto',
+    layerDecomposition: false,
+    transparentBackground: false,
+    sequential: 'disabled',
+    sequentialMaxImages: 1,
+    optimizePromptMode: 'standard',
+    watermark: false,
+    responseFormat: config.responseFormat || 'b64_json',
+  }
+}
+
+export function buildOptionsFromStandalone(config: Config): ImageGenOptions {
+  if (config.openAICompatible?.enabled) {
+    return buildOptionsFromOpenAICompatible(config.openAICompatible)
+  }
+
+  const standalone = config.standalone
+  return {
+    apiType: 'ark',
+    apiKey: standalone.apiKey,
+    endpoint: standalone.endpoint,
+    modelId: standalone.modelId,
+    generationCount: 1,
+    quality: 'auto',
+    enableWebSearch: standalone.enableWebSearch,
+    size: standalone.size,
+    layerDecomposition: standalone.layerDecomposition,
+    transparentBackground: standalone.transparentBackground,
+    sequential: standalone.sequentialImageGeneration,
+    sequentialMaxImages: standalone.sequentialMaxImages,
+    optimizePromptMode: standalone.optimizePromptMode,
+    watermark: standalone.watermark,
+    responseFormat: standalone.responseFormat,
   }
 }
 
@@ -196,10 +219,11 @@ import type { Session } from 'koishi'
 
 export async function sendGenerationResult(
   session: Session, responseFormat: string, withDetails: boolean, sequential: string, result: any,
+  layerDecomposition = false,
 ): Promise<number> {
   const data = Array.isArray(result?.data) ? result.data : []
   let successCount = 0
-  const shouldSendAsFigure = sequential === 'auto' && data.length > 1
+  const shouldSendAsFigure = (sequential === 'auto' || layerDecomposition) && data.length > 1
 
   if (shouldSendAsFigure) {
     const messages: any[] = []

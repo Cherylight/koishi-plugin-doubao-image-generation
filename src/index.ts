@@ -23,6 +23,7 @@ export const usage = `
 
 - **独立模式**：通过 \`gen\` 命令直接使用，需配置 API Key
 - **ChatLuna 模式**：从 chatluna-doubao-adapter 继承配置，注册为 \`photo_generation\` 工具，支持角色人设图混合生图
+- **OpenAI 兼容接口**：启用后使用独立配置覆盖上述 ARK 图片请求，并自动路由文生图与图片编辑
 
 详见 [README](https://github.com/Cherylight/koishi-plugin-doubao-image-generation) 获取完整文档。
 `

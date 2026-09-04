@@ -4,7 +4,7 @@ import type { Config, ChatlunaConfig } from './config'
 import { resolveDailyLimit } from './config'
 import { logger, asDataUri, normalizeApiError, translateErrorCode, extractWebSearchUsage } from './utils'
 import {
-  requestImageGeneration, validateAndPrepareImages,
+  requestImageGeneration, validateAndPrepareImages, buildOptionsFromOpenAICompatible,
   type ImageGenOptions,
 } from './api-client'
 import {
@@ -69,9 +69,15 @@ function resolveAdapterCredentials(ctx: Context): { apiKey: string; endpointBase
 }
 
 function buildChatlunaGenOptions(
-  chatlunaConfig: ChatlunaConfig,
-  credentials: { apiKey: string; endpointBase: string },
+  config: Config,
+  credentials: { apiKey: string; endpointBase: string } | null,
 ): ImageGenOptions {
+  if (config.openAICompatible?.enabled) {
+    return buildOptionsFromOpenAICompatible(config.openAICompatible)
+  }
+  if (!credentials) throw new Error('未找到可用的 chatluna-doubao-adapter 配置')
+
+  const chatlunaConfig = config.chatluna
   let endpoint = credentials.endpointBase
   if (!endpoint.endsWith('/')) endpoint += '/'
   if (!endpoint.endsWith('images/generations')) {
@@ -79,11 +85,16 @@ function buildChatlunaGenOptions(
   }
 
   return {
+    apiType: 'ark',
     apiKey: credentials.apiKey,
     endpoint,
     modelId: chatlunaConfig.modelId,
+    generationCount: 1,
+    quality: 'auto',
     enableWebSearch: chatlunaConfig.enableWebSearch,
     size: chatlunaConfig.size,
+    layerDecomposition: false,
+    transparentBackground: false,
     sequential: 'disabled',
     sequentialMaxImages: 1,
     optimizePromptMode: chatlunaConfig.optimizePromptMode,
@@ -143,13 +154,15 @@ export function registerChatlunaIntegration(ctx: Context, config: Config, genera
     return
   }
 
-  const credentials = resolveAdapterCredentials(ctx)
-  if (!credentials) {
+  const credentials = config.openAICompatible?.enabled ? null : resolveAdapterCredentials(ctx)
+  if (!config.openAICompatible?.enabled && !credentials) {
     logger.warn('ChatLuna 模式已启用，但未找到可用的 chatluna-doubao-adapter 配置，跳过工具注册')
     return
   }
 
-  logger.info('ChatLuna 模式已激活，正在注册 photo_generation 工具...')
+  const generationOptions = buildChatlunaGenOptions(config, credentials)
+
+  logger.info(`ChatLuna 模式已激活，正在使用 ${generationOptions.apiType === 'openai-compatible' ? 'OpenAI 兼容接口' : 'ARK 接口'} 注册 photo_generation 工具...`)
 
   // 初始化预设图片目录
   initPresetsDir(ctx, config)
@@ -174,13 +187,13 @@ export function registerChatlunaIntegration(ctx: Context, config: Config, genera
 
     private genCtx: Context
     private genConfig: ChatlunaConfig
-    private genCredentials: { apiKey: string; endpointBase: string }
+    private genOptions: ImageGenOptions
 
-    constructor(genCtx: Context, genConfig: ChatlunaConfig, genCredentials: { apiKey: string; endpointBase: string }) {
+    constructor(genCtx: Context, genConfig: ChatlunaConfig, genOptions: ImageGenOptions) {
       super({})
       this.genCtx = genCtx
       this.genConfig = genConfig
-      this.genCredentials = genCredentials
+      this.genOptions = genOptions
     }
 
     async _call(
@@ -203,7 +216,7 @@ export function registerChatlunaIntegration(ctx: Context, config: Config, genera
       )
 
       try {
-        const options = buildChatlunaGenOptions(this.genConfig, this.genCredentials)
+        const options = this.genOptions
         let preparedImages: string[] | undefined
 
         // 如果请求附加人设图，解析预设图片
@@ -213,7 +226,7 @@ export function registerChatlunaIntegration(ctx: Context, config: Config, genera
             try {
               const buffer = fs.readFileSync(presetImagePath)
               const dataUri = `data:image/png;base64,${buffer.toString('base64')}`
-              const validated = await validateAndPrepareImages(this.genCtx, 'disabled', 1, [dataUri])
+              const validated = await validateAndPrepareImages(this.genCtx, options, [dataUri])
               if (validated.ok && validated.images?.length) {
                 preparedImages = validated.images
                 logger.debug(`已附加人设参考图: ${presetName}.png`)
@@ -232,7 +245,7 @@ export function registerChatlunaIntegration(ctx: Context, config: Config, genera
           prompt: input.prompt,
           images: preparedImages,
           responseFormat: options.responseFormat,
-          quotaUnits: 1,
+          quotaUnits: options.apiType === 'openai-compatible' ? options.generationCount : 1,
           dailyLimit: resolveDailyLimit(config),
           lockKey,
           dedupeKey,
@@ -303,7 +316,7 @@ export function registerChatlunaIntegration(ctx: Context, config: Config, genera
     plugin.registerTool('photo_generation', {
       description: cc.toolDescription,
       selector: () => true,
-      createTool: () => new PhotoGenerationTool(ctx, cc, credentials),
+      createTool: () => new PhotoGenerationTool(ctx, cc, generationOptions),
       meta: {
         source: 'extension',
         group: 'doubao-image-generation',
