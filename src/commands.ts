@@ -121,8 +121,16 @@ export function registerStandaloneCommands(
     .action(async ({ session }, prompt) => {
       if (!session) return
       const rawContent = session.content || ''
-      const images = extractImages(rawContent)
-      const finalPrompt = (prompt || '').trim()
+      const promptContent = prompt || ''
+      // Koishi 默认会把引用消息内容追加到 text 参数中。图片必须同时从
+      // prompt 与 session/quote 提取，并从最终文字提示词中剥离，避免把
+      // OneBot/QQ 临时下载链接作为普通文本透传到文生图端点。
+      const images = Array.from(new Set([
+        ...extractImages(rawContent),
+        ...extractImages(promptContent),
+        ...extractImages(session.quote?.content || ''),
+      ]))
+      const finalPrompt = extractText(promptContent)
 
       if (!finalPrompt && !images.length) {
         return session.text('.gen-no-input')

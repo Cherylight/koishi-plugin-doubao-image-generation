@@ -29,6 +29,7 @@
 
 - 纯文字 → 文生图
 - 文字 + 图片 → 图生图
+- 回复含图片的消息时，插件会把引用内容中的图片提取为文件输入并从提示词中移除图片标签
 
 ```
 gen 一只在月球上散步的橘猫
@@ -185,7 +186,7 @@ gen-ctx -s       # 以当前上下文发送生成请求
 | `dailySuccessLimit` | `number` | `20` | 独立每日成功图片限额；共享限额大于 0 时由共享限额覆盖 |
 | `withResultDetails` | `boolean` | `false` | 是否额外发送调用详情 |
 
-兼容模式下，插件不会继承 ARK 的模型、尺寸、组图、提示词优化、水印、联网搜索、图层拆分或透明背景配置。无参考图时请求 `${baseURL}/images/generations`；有参考图时请求 `${baseURL}/images/edits`。兼容接口的 `data[].b64_json` / `data[].url` 继续沿用现有结果处理流程。
+兼容模式下，插件不会继承 ARK 的模型、尺寸、组图、提示词优化、水印、联网搜索、图层拆分或透明背景配置。无参考图时以 JSON 请求 `${baseURL}/images/generations`；有参考图时，插件先通过 Koishi 下载图片并转换为文件，再以 `multipart/form-data` 请求 `${baseURL}/images/edits`，不会把 OneBot/QQ 临时下载链接直接透传给兼容端点。兼容接口的 `data[].b64_json` / `data[].url` 继续沿用现有结果处理流程。
 
 ### ChatLuna 模式 (`chatluna`)
 

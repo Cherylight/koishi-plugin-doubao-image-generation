@@ -157,7 +157,7 @@ const scenarios = [
     return { endpoint: requestOptions.resolveImageEndpoint(options, payload), body }
   }),
 
-  await runScenario('OpenAI compatible image-to-image uses edits and keeps data URI images', async () => {
+  await runScenario('OpenAI compatible image-to-image uses edits with multipart file uploads', async () => {
     const options = {
       ...baseRequestOptions,
       apiType: 'openai-compatible',
@@ -167,11 +167,44 @@ const scenarios = [
       generationCount: 1,
       quality: 'auto',
     }
-    const payload = { prompt: 'change the color', images: ['data:image/png;base64,AAAA'] }
+    const payload = {
+      prompt: 'change the color',
+      images: [
+        `data:image/png;base64,${Buffer.from('first-image').toString('base64')}`,
+        `data:image/jpeg;base64,${Buffer.from('second-image').toString('base64')}`,
+      ],
+    }
     const body = requestOptions.buildImageGenerationBody(options, payload)
-    assert.equal(body.image, 'data:image/png;base64,AAAA')
+    assert.equal('image' in body, false)
+    const form = requestOptions.buildOpenAICompatibleEditFormData(options, payload)
+    assert.equal(form.get('prompt'), 'change the color')
+    assert.equal(form.get('model'), 'gpt-image-2')
+    assert.equal(form.getAll('image').length, 2)
+    assert.deepEqual(form.getAll('image').map((file) => [file.name, file.type]), [
+      ['image-1.png', 'image/png'],
+      ['image-2.jpg', 'image/jpeg'],
+    ])
     assert.equal(requestOptions.resolveImageEndpoint(options, payload), 'http://127.0.0.1:8000/v1/images/edits')
-    return { endpoint: requestOptions.resolveImageEndpoint(options, payload), body }
+    return {
+      endpoint: requestOptions.resolveImageEndpoint(options, payload),
+      contentType: 'multipart/form-data',
+      imageFiles: form.getAll('image').map((file) => [file.name, file.type]),
+    }
+  }),
+
+  await runScenario('OpenAI compatible edits reject unprepared source URLs', async () => {
+    const options = {
+      ...baseRequestOptions,
+      apiType: 'openai-compatible',
+      endpoint: 'http://127.0.0.1:8000/v1',
+      modelId: 'gpt-image-2',
+      size: 'auto',
+    }
+    assert.throws(() => requestOptions.buildOpenAICompatibleEditFormData(options, {
+      prompt: 'edit',
+      images: ['https://multimedia.nt.qq.com.cn/download?temporary=1'],
+    }), /拒绝向兼容端点透传原始图片链接/)
+    return { rejectedRawUrl: true }
   }),
 
   await runScenario('OpenAI compatible generation count is limited to one through four', async () => {

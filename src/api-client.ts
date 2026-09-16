@@ -1,11 +1,13 @@
 import { Context } from 'koishi'
 import './types'
 import {
-  logger, normalizeApiError, detectImageMeta, parseDataUri, getImageRulesByModel,
+  logger, normalizeApiError, detectImageMeta, getImageRulesByModel,
   asDataUri, translateErrorCode, buildDetailMessage, DAILY_USAGE_TABLE, todayKey, keepFromDateKey,
 } from './utils'
 import type { Config, OpenAICompatibleConfig, ImageSize, OptimizePromptMode } from './config'
-import { buildImageGenerationBody, resolveImageEndpoint } from './request-options'
+import {
+  buildImageGenerationBody, buildOpenAICompatibleEditFormData, resolveImageEndpoint,
+} from './request-options'
 import type { DailyUsageSnapshot, QuotaStore } from './generation-controller'
 import { normalizeUsageRow } from './generation-controller'
 
@@ -82,14 +84,10 @@ export class KoishiQuotaStore implements QuotaStore {
 // ── Image loading & validation ──
 
 export async function loadImageSource(ctx: Context, src: string): Promise<{ buffer: Buffer; dataUri: string }> {
-  const parsed = parseDataUri(src)
-  if (parsed) {
-    return { buffer: Buffer.from(parsed.base64, 'base64'), dataUri: src }
-  }
-  const data = await ctx.http.get(src, { responseType: 'arraybuffer' })
-  const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer)
+  const file = await ctx.http.file(src)
+  const buffer = Buffer.from(file.data)
   const meta = detectImageMeta(buffer)
-  const mime = meta?.mime || 'image/png'
+  const mime = meta?.mime || file.type || file.mime || 'application/octet-stream'
   return { buffer, dataUri: `data:${mime};base64,${buffer.toString('base64')}` }
 }
 
@@ -156,14 +154,18 @@ export interface ImageGenOptions {
 
 export async function requestImageGeneration(ctx: Context, options: ImageGenOptions, payload: ImageGenPayload): Promise<any> {
   const endpoint = resolveImageEndpoint(options, payload)
+  const useMultipart = options.apiType === 'openai-compatible' && Boolean(payload.images?.length)
   const maskedKey = options.apiKey ? options.apiKey.slice(0, 4) + '***' + options.apiKey.slice(-4) : '(empty)'
-  logger.debug(`请求参数: apiType=${options.apiType}, endpoint=${endpoint}, model=${options.modelId}, key=${maskedKey}`)
-  const body = buildImageGenerationBody(options, payload)
+  logger.debug(`请求参数: apiType=${options.apiType}, endpoint=${endpoint}, transport=${useMultipart ? 'multipart' : 'json'}, imageCount=${payload.images?.length || 0}, model=${options.modelId}, key=${maskedKey}`)
+  const body = useMultipart
+    ? buildOpenAICompatibleEditFormData(options, payload)
+    : buildImageGenerationBody(options, payload)
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${options.apiKey}`,
+  }
+  if (!useMultipart) headers['Content-Type'] = 'application/json'
   return ctx.http.post(endpoint, body, {
-    headers: {
-      Authorization: `Bearer ${options.apiKey}`,
-      'Content-Type': 'application/json',
-    },
+    headers,
   })
 }
 

@@ -1,3 +1,5 @@
+import { Buffer } from 'node:buffer'
+
 export type SeedreamModelFamily = '5.0-pro' | '5.0-lite' | '4.5' | '4.0' | 'unknown'
 
 export interface ImageRequestOptions {
@@ -146,7 +148,7 @@ export function buildImageGenerationBody(options: ImageRequestOptions, payload: 
   const prompt = String(payload.prompt || '').trim()
 
   if (options.apiType === 'openai-compatible') {
-    const body: Record<string, any> = {
+    return {
       model: options.modelId,
       prompt,
       n: options.generationCount,
@@ -154,10 +156,6 @@ export function buildImageGenerationBody(options: ImageRequestOptions, payload: 
       quality: options.quality,
       response_format: options.responseFormat,
     }
-    if (payload.images?.length) {
-      body.image = payload.images.length === 1 ? payload.images[0] : payload.images
-    }
-    return body
   }
 
   const family = getSeedreamModelFamily(options.modelId)
@@ -193,6 +191,34 @@ export function buildImageGenerationBody(options: ImageRequestOptions, payload: 
     body.tools = [{ type: 'web_search' }]
   }
   return body
+}
+
+export function buildOpenAICompatibleEditFormData(
+  options: ImageRequestOptions,
+  payload: ImageRequestPayload,
+): FormData {
+  if (options.apiType !== 'openai-compatible' || !payload.images?.length) {
+    throw new Error('仅 OpenAI 兼容图片编辑请求可以构建 multipart 表单')
+  }
+
+  const fields = buildImageGenerationBody(options, payload)
+  const form = new FormData()
+  for (const [key, value] of Object.entries(fields)) {
+    form.append(key, String(value))
+  }
+
+  payload.images.forEach((source, index) => {
+    const matched = String(source || '').match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,([\s\S]+)$/)
+    if (!matched) {
+      throw new Error(`第 ${index + 1} 张参考图尚未转换为本地文件，拒绝向兼容端点透传原始图片链接`)
+    }
+    const mime = matched[1].toLowerCase()
+    const buffer = Buffer.from(matched[2], 'base64')
+    const extension = mime === 'image/jpeg' ? 'jpg' : mime.split('/')[1].replace(/[^a-z0-9]+/g, '') || 'bin'
+    const blob = new Blob([new Uint8Array(buffer)], { type: mime })
+    form.append('image', blob, `image-${index + 1}.${extension}`)
+  })
+  return form
 }
 
 export function resolveImageEndpoint(options: ImageRequestOptions & { endpoint: string }, payload: ImageRequestPayload): string {
