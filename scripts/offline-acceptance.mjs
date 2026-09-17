@@ -108,6 +108,7 @@ async function runScenario(name, fn) {
 
 const mod = await loadTypescriptModule('src/generation-controller.ts')
 const requestOptions = await loadTypescriptModule('src/request-options.ts')
+const chatlunaToolResult = await loadTypescriptModule('src/chatluna-tool-result.ts')
 
 const baseRequestOptions = {
   apiType: 'ark',
@@ -126,6 +127,41 @@ const baseRequestOptions = {
 }
 
 const scenarios = [
+  await runScenario('ChatLuna tool description enforces ordered delivery and private failures', async () => {
+    const description = chatlunaToolResult.buildChatlunaToolDescription('Generate an image.')
+    assert.match(description, /waits until image generation finishes/)
+    assert.match(description, /images were already delivered/)
+    assert.match(description, /no plugin error notice was sent to the user/)
+    assert.match(description, /content_policy_violation/)
+    assert.match(description, /upstream_quota_exhausted/)
+    return { protocolAppended: true }
+  }),
+
+  await runScenario('Upstream insufficient quota takes precedence over HTTP 429 rate limiting', async () => {
+    const result = chatlunaToolResult.classifyImageGenerationError({
+      code: 'insufficient_quota',
+      type: 'insufficient_quota',
+      message: 'no available image quota',
+      httpStatus: 429,
+    })
+    assert.equal(result.category, 'upstream_quota_exhausted')
+    assert.equal(result.retryable, false)
+    assert.match(result.suggestedAction, /Do not retry/)
+    return result
+  }),
+
+  await runScenario('Content policy failures recommend one safely revised retry', async () => {
+    const result = chatlunaToolResult.classifyImageGenerationError({
+      code: 'content_policy_violation',
+      message: 'Prompt was rejected by the safety system',
+      httpStatus: 400,
+    })
+    assert.equal(result.category, 'content_policy_violation')
+    assert.equal(result.retryable, true)
+    assert.match(result.suggestedAction, /retry once/)
+    return result
+  }),
+
   await runScenario('OpenAI compatible text-to-image uses generations with independent fields', async () => {
     const options = {
       ...baseRequestOptions,

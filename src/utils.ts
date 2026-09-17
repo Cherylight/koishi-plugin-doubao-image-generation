@@ -1,4 +1,5 @@
 import { h, Logger } from 'koishi'
+import { classifyImageGenerationError, type ImageGenerationErrorCategory } from './chatluna-tool-result'
 
 export const logger = new Logger('doubao-image-generation')
 
@@ -59,6 +60,9 @@ export const ERROR_CODE_ZH: Record<string, string> = {
   InflightBatchsizeExceeded: '并发数超过当前上限，请降低并发或充值提升额度。',
   AccountRateLimitExceeded: '请求过于频繁（RPM/TPM 超限），请稍后重试。',
   InternalServiceError: '服务内部异常，请稍后重试。',
+  insufficient_quota: '上游图片服务额度不足，请补充额度或切换可用服务。',
+  rate_limit_exceeded: '上游请求频率已达限制，请稍后重试。',
+  content_policy_violation: '提示词触发上游内容安全策略，请修改后重试。',
 }
 
 export function translateErrorCode(code: string): string {
@@ -69,14 +73,52 @@ export function translateErrorCode(code: string): string {
   return '未知错误码，请结合原始 message 与 Request ID 排查。'
 }
 
-export function normalizeApiError(error: any): { code: string; message: string; zh: string } {
+export interface NormalizedApiError {
+  code: string
+  type: string
+  message: string
+  zh: string
+  httpStatus?: number
+  statusText?: string
+  requestId?: string
+  category: ImageGenerationErrorCategory
+  retryable: boolean
+  suggestedAction: string
+}
+
+function getResponseHeader(headers: any, name: string): string {
+  if (!headers) return ''
+  if (typeof headers.get === 'function') return headers.get(name) || ''
+  return headers[name] || headers[name.toLowerCase()] || ''
+}
+
+export function normalizeApiError(error: any): NormalizedApiError {
   const bodyError = error?.response?.data?.error
     || error?.data?.error
     || (typeof error?.response?.data === 'string' ? {} : error?.response?.data)
     || {}
   const code = bodyError.code || error?.code || ''
+  const type = bodyError.type || ''
   const message = bodyError.message || error?.message || ''
-  return { code, message, zh: translateErrorCode(code) }
+  const httpStatus = Number(error?.response?.status) || undefined
+  const statusText = error?.response?.statusText || ''
+  const headers = error?.response?.headers
+  const requestId = bodyError.request_id
+    || bodyError.requestId
+    || getResponseHeader(headers, 'x-request-id')
+    || getResponseHeader(headers, 'x-tt-logid')
+    || ''
+  const classification = classifyImageGenerationError({ code, type, message, httpStatus })
+  return {
+    code,
+    type,
+    message,
+    zh: translateErrorCode(code),
+    httpStatus,
+    statusText,
+    requestId,
+    ...classification,
+  }
 }
 
 export function timestampToLocal(created: number | undefined): string {

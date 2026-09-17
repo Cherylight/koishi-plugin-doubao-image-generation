@@ -93,7 +93,9 @@ gen-ctx -s       # 以当前上下文发送生成请求
           - 可以根据天气，穿搭，日程，心情等多方面构成提示词，提示词应尽量具体和有画面感，避免过于抽象。
           - 当你想画"你自己"或画出与你风格一致的图时，必须设置 use_preset_image 为 true
           - 当使用 use_preset_image 时，提示词必须包含“…参考图中人物…”
-          - 图片会由外部服务直接发送给用户，你只会收到成功或失败的状态
+          - 工具会等待生成完成；成功时图片已由插件发送给用户，失败时错误仅作为工具结果返回，不会由插件直接发给用户
+          - 必须等待工具结果后再组织配套文字，不要提前表示“正在生成”或承诺稍后发送
+          - 根据工具结果中的 error.category、retryable 和 suggestedAction 决定是否重试；内容安全失败可安全改写提示词后最多重试一次，无额度时不要在同一轮原样重试
           - 不要频繁调用，只在确实需要生成图片的场合使用
 ```
 
@@ -101,7 +103,7 @@ gen-ctx -s       # 以当前上下文发送生成请求
 
 - **文生图**：模型传入 prompt 描述，插件直接生成图片并发送给用户
 - **人设图混合生图**：模型设置 `use_preset_image: true`，插件自动查找当前角色预设对应的参考图，结合 prompt 进行图生图
-- **结果处理**：图片由插件直接发送给用户，只返回成功/失败状态文本给当前模型
+- **结果处理**：工具调用会等待生成与投递完成。成功时插件直接发送图片并向模型返回结构化结果；失败时不向会话直接发送错误，只向模型返回结构化结果
 
 ### 参数
 
@@ -112,15 +114,39 @@ gen-ctx -s       # 以当前上下文发送生成请求
 
 ### 返回格式
 
-工具只返回状态文本给 LLM，图片/错误信息由插件直接发送给用户：
+工具向 LLM 返回结构化 JSON。成功时图片已发送给用户：
 
 ```json
-{ "success": true, "message": "图片生成成功，已发送 1 张图片给用户。" }
+{
+  "success": true,
+  "status": "success",
+  "message": "图片生成成功，已发送 1 张图片给用户。",
+  "delivery": { "imagesGenerated": 1, "imagesSent": 1 }
+}
 ```
 
 ```json
-{ "success": false, "message": "错误描述" }
+{
+  "success": false,
+  "status": "failed",
+  "message": "no available image quota",
+  "delivery": {
+    "imagesGenerated": 0,
+    "imagesSent": 0,
+    "failureNoticeSent": false
+  },
+  "error": {
+    "category": "upstream_quota_exhausted",
+    "code": "insufficient_quota",
+    "localizedMessage": "上游图片服务额度不足，请补充额度或切换可用服务。",
+    "httpStatus": 429,
+    "retryable": false,
+    "suggestedAction": "Do not retry the same request in this turn..."
+  }
+}
 ```
+
+插件按响应体业务码优先分类错误。例如上游虽然以 HTTP 429 返回 `insufficient_quota`，工具结果仍会归类为 `upstream_quota_exhausted`，不会误判为普通频率限制。内容安全失败会归类为 `content_policy_violation`，并建议安全改写提示词后最多重试一次。工具注册时会在自定义 `toolDescription` 后自动追加上述等待、投递和失败处理协议。
 
 ### 人设参考图设置
 
@@ -204,7 +230,7 @@ gen-ctx -s       # 以当前上下文发送生成请求
 - 模型返回中的联网搜索次数使用 `usage.tool_usage.web_search` 字段。
 - 当独立模式开启 `withResultDetails` 时，详情消息会展示 `tool_usage.web_search`。
 
-默认工具描述：
+默认基础工具描述（注册时会自动追加固定的等待、投递和失败处理协议）：
 
 > Generate or transform images using the Doubao Seedream model. Call this tool when you want to create, draw, paint, or modify images. You can optionally attach the current character preset reference image for style-consistent generation.
 

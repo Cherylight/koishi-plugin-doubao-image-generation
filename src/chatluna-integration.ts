@@ -4,6 +4,10 @@ import type { Config, ChatlunaConfig } from './config'
 import { resolveDailyLimit } from './config'
 import { logger, asDataUri, normalizeApiError, translateErrorCode, extractWebSearchUsage } from './utils'
 import {
+  buildChatlunaToolDescription,
+  classifyImageGenerationError,
+} from './chatluna-tool-result'
+import {
   requestImageGeneration, validateAndPrepareImages, buildOptionsFromOpenAICompatible,
   type ImageGenOptions,
 } from './api-client'
@@ -22,6 +26,45 @@ type ChatLunaTool = any
 
 interface DoubaoAdapterConfig {
   apiKeys: [string, string, boolean][]
+}
+
+function buildFailureResult(
+  category: string,
+  message: string,
+  retryable: boolean,
+  suggestedAction: string,
+  details: {
+    code?: string
+    type?: string
+    localizedMessage?: string
+    httpStatus?: number
+    statusText?: string
+    requestId?: string
+    generatedCount?: number
+    sentCount?: number
+  } = {},
+) {
+  const {
+    generatedCount = 0,
+    sentCount = 0,
+    ...errorDetails
+  } = details
+  return {
+    success: false,
+    status: 'failed',
+    message,
+    delivery: {
+      imagesGenerated: generatedCount,
+      imagesSent: sentCount,
+      failureNoticeSent: false,
+    },
+    error: {
+      category,
+      ...errorDetails,
+      retryable,
+      suggestedAction,
+    },
+  }
 }
 
 function resolveAdapterCredentials(ctx: Context): { apiKey: string; endpointBase: string } | null {
@@ -161,6 +204,7 @@ export function registerChatlunaIntegration(ctx: Context, config: Config, genera
   }
 
   const generationOptions = buildChatlunaGenOptions(config, credentials)
+  const toolDescription = buildChatlunaToolDescription(cc.toolDescription)
 
   logger.info(`ChatLuna 模式已激活，正在使用 ${generationOptions.apiType === 'openai-compatible' ? 'OpenAI 兼容接口' : 'ARK 接口'} 注册 photo_generation 工具...`)
 
@@ -182,7 +226,7 @@ export function registerChatlunaIntegration(ctx: Context, config: Config, genera
 
   class PhotoGenerationTool extends StructuredToolClass {
     name = 'photo_generation'
-    description = cc.toolDescription
+    description = toolDescription
     schema = toolSchema
 
     private genCtx: Context
@@ -272,38 +316,115 @@ export function registerChatlunaIntegration(ctx: Context, config: Config, genera
 
             if (sentCount > 0) return sentCount
 
-            // 处理错误并直接发送给用户
-            const err = result?.error || data.find((d: any) => d?.error)?.error
-            const errMsg = err?.message || '未返回可用图片'
-            const errCode = err?.code || ''
-            const zh = errCode ? translateErrorCode(errCode) : ''
-            if (session) {
-              await session.send(`图片生成失败：${errCode || '-'}${zh ? `（${zh}）` : ''}\n${errMsg}`.trim())
-            }
             return sentCount
           },
           webSearchUsage: extractWebSearchUsage,
         })
 
         if (output.status === 'ok') {
-          return JSON.stringify({ success: true, message: output.message })
+          if (output.sentCount > 0) {
+            return JSON.stringify({
+              success: true,
+              status: 'success',
+              message: output.message,
+              delivery: { imagesGenerated: output.generatedCount, imagesSent: output.sentCount },
+            })
+          }
+          return JSON.stringify(buildFailureResult(
+            'delivery_failed',
+            '图片已生成，但未能发送给用户。',
+            false,
+            'Do not repeat the same request in this turn. Continue naturally and briefly acknowledge that the image could not be delivered if needed.',
+            { generatedCount: output.generatedCount, sentCount: output.sentCount },
+          ))
         }
         if (output.status === 'no_image') {
           const err = output.result?.error || (output.result?.data || []).find((d: any) => d?.error)?.error
-          return JSON.stringify({ success: false, message: err?.message || output.message })
+          if (err) {
+            const classification = classifyImageGenerationError({
+              code: err.code,
+              type: err.type,
+              message: err.message,
+            })
+            return JSON.stringify(buildFailureResult(
+              classification.category,
+              err.message || output.message,
+              classification.retryable,
+              classification.suggestedAction,
+              {
+                code: err.code,
+                type: err.type,
+                localizedMessage: err.code ? translateErrorCode(err.code) : undefined,
+              },
+            ))
+          }
+          return JSON.stringify(buildFailureResult(
+            'empty_response',
+            output.message,
+            true,
+            'Retry once. If the provider again returns no image, stop retrying and continue naturally without the image.',
+          ))
         }
-        if (session && output.status !== 'send_failed') {
-          await session.send(output.message)
+        if (output.status === 'quota_exceeded') {
+          return JSON.stringify(buildFailureResult(
+            'plugin_quota_exhausted',
+            output.message,
+            false,
+            'Do not retry in this turn. Continue naturally without the image and suggest trying again after the plugin quota resets if needed.',
+          ))
         }
-        return JSON.stringify({ success: false, message: output.message })
+        if (output.status === 'busy') {
+          return JSON.stringify(buildFailureResult(
+            'request_in_progress',
+            output.message,
+            true,
+            'Do not claim that this request will finish asynchronously. Retry later only if the user still needs the image.',
+          ))
+        }
+        if (output.status === 'duplicate') {
+          return JSON.stringify(buildFailureResult(
+            'duplicate_request',
+            output.message,
+            false,
+            'Do not repeat the same request in this turn. Continue from the earlier result.',
+          ))
+        }
+        return JSON.stringify(buildFailureResult(
+          'delivery_failed',
+          output.message,
+          false,
+          'Do not repeat the same request in this turn. Continue naturally and briefly acknowledge that the image could not be delivered if needed.',
+          { generatedCount: output.generatedCount, sentCount: output.sentCount },
+        ))
       } catch (error: any) {
-        logger.warn('photo_generation tool error:', error)
         const info = normalizeApiError(error)
-        const errText = `图片生成调用失败：${info.code || '-'}${info.zh ? `（${info.zh}）` : ''}\n${info.message || ''}`.trim()
-        if (session) {
-          await session.send(errText)
+        if (info.category === 'unknown') {
+          logger.warn('photo_generation internal or unclassified error:', error)
+        } else {
+          logger.warn(
+            'photo_generation failed: category=%s code=%s httpStatus=%s requestId=%s message=%s',
+            info.category,
+            info.code || '-',
+            info.httpStatus || '-',
+            info.requestId || '-',
+            info.message || '-',
+          )
+          logger.debug('photo_generation upstream error details:', error)
         }
-        return JSON.stringify({ success: false, message: info.message || '图片生成调用失败' })
+        return JSON.stringify(buildFailureResult(
+          info.category,
+          info.message || info.zh || '图片生成调用失败',
+          info.retryable,
+          info.suggestedAction,
+          {
+            code: info.code,
+            type: info.type,
+            localizedMessage: info.zh,
+            httpStatus: info.httpStatus,
+            statusText: info.statusText,
+            requestId: info.requestId,
+          },
+        ))
       }
     }
   }
@@ -314,7 +435,7 @@ export function registerChatlunaIntegration(ctx: Context, config: Config, genera
     const plugin = new ChatLunaPlugin(ctx, config, 'doubao-image-generation', false)
 
     plugin.registerTool('photo_generation', {
-      description: cc.toolDescription,
+      description: toolDescription,
       selector: () => true,
       createTool: () => new PhotoGenerationTool(ctx, cc, generationOptions),
       meta: {
